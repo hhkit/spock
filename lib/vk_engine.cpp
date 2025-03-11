@@ -6,6 +6,9 @@ namespace spock {
 
 constexpr bool use_validation_layers = false;
 static VulkanEngine *engine{};
+void error_callback(int error, const char *description) {
+  fprintf(stderr, "Error: %s\n", description);
+}
 
 struct VulkanEngine::impl {
   GLFWwindow *_window{};
@@ -14,6 +17,12 @@ struct VulkanEngine::impl {
 
   impl() {
     glfwInit();
+    glfwSetErrorCallback(+[](int error, const char *desc) {
+      fprintf(stderr, "Error: %s\n", desc);
+    });
+
+    // disable opengl context creation
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     _window = glfwCreateWindow(_windowExtent.width, _windowExtent.height,
                                "Vulkan Engine", nullptr, nullptr);
   }
