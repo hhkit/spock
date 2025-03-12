@@ -36,11 +36,11 @@ struct VulkanEngine::impl {
   int _frameNumber{};
   vk::Extent2D _windowExtent{1700, 900};
 
-  vk::Instance _instance;
+  vk::UniqueInstance _instance;
   vk::UniqueDebugUtilsMessengerEXT _debug_messenger;
 
   vk::PhysicalDevice _chosen_gpu;
-  vk::Device _device;
+  vk::UniqueDevice _device;
   vk::UniqueSurfaceKHR _surface;
 
   std::optional<swapchain> _swapchain;
@@ -50,16 +50,12 @@ struct VulkanEngine::impl {
 
   impl() {}
 
-  ~impl() noexcept {
-    _swapchain.reset();
-    _surface.reset();
-    _device.destroy();
-    _debug_messenger.reset();
-    _instance.destroy();
-    _window.reset();
-  }
+  ~impl() noexcept {}
 
   void init_vulkan() {
+    const auto orphan_destroyer =
+        vk::ObjectDestroy<vk::NoParent, vk::DispatchLoaderDynamic>{
+            nullptr, VULKAN_HPP_DEFAULT_DISPATCHER};
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
     glfwSetErrorCallback(+[](int error, const char *desc) {
@@ -83,15 +79,13 @@ struct VulkanEngine::impl {
 
     auto vkb_inst = inst_ret.value();
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance{vkb_inst.instance});
-    _instance = vkb_inst.instance;
-    assert(&VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyInstance);
-    assert(&VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyDebugUtilsMessengerEXT);
-    _debug_messenger =
-        vk::UniqueDebugUtilsMessengerEXT(vkb_inst.debug_messenger, _instance);
+    _instance = vk::UniqueInstance{vkb_inst.instance, orphan_destroyer};
+    _debug_messenger = vk::UniqueDebugUtilsMessengerEXT(
+        vkb_inst.debug_messenger, _instance.get());
 
     VkSurfaceKHR surface;
-    glfwCreateWindowSurface(_instance, _window.get(), nullptr, &surface);
-    _surface = vk::UniqueSurfaceKHR{surface, _instance};
+    glfwCreateWindowSurface(_instance.get(), _window.get(), nullptr, &surface);
+    _surface = vk::UniqueSurfaceKHR{surface, _instance.get()};
 
     // vulkan 1.3 features
     VkPhysicalDeviceVulkan13Features features{
@@ -122,9 +116,10 @@ struct VulkanEngine::impl {
     vkb::Device vkbDevice = deviceBuilder.build().value();
 
     // Get the VkDevice handle used in the rest of a vulkan application
-    // VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device{vkbDevice.device});
-    // _device = vk::UniqueDevice{vk::Device{vkbDevice.device}, _instance};
-    _device = vk::Device{vkbDevice.device};
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device{vkbDevice.device});
+
+    // holy crap wtf the default ctor doesn't work
+    _device = vk::UniqueDevice{vkbDevice.device, orphan_destroyer};
 
     _chosen_gpu = physicalDevice.physical_device;
   }
@@ -134,7 +129,7 @@ struct VulkanEngine::impl {
   }
 
   swapchain create_swapchain(uint32_t width, uint32_t height) {
-    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device,
+    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device.get(),
                                            _surface.get()};
 
     vk::Format imageFormat = vk::Format::eB8G8R8A8Unorm;
@@ -156,11 +151,11 @@ struct VulkanEngine::impl {
     for (auto image : vkbSwapchain.get_images().value())
       images.push_back(vk::Image(image));
     for (auto image : vkbSwapchain.get_image_views().value())
-      image_views.push_back(vk::UniqueImageView(image));
+      image_views.push_back(vk::UniqueImageView(image, _device.get()));
 
     return swapchain{.extents = vkbSwapchain.extent,
-                     .swapchain =
-                         vk::UniqueSwapchainKHR{vkbSwapchain.swapchain},
+                     .swapchain = vk::UniqueSwapchainKHR{vkbSwapchain.swapchain,
+                                                         _device.get()},
                      .images = std::move(images),
                      .image_views = std::move(image_views)};
   }
@@ -177,7 +172,7 @@ void VulkanEngine::init() {
   glfwInit();
   _pimpl = std::make_unique<impl>();
   _pimpl->init_vulkan();
-  // _pimpl->init_swapchain();
+  _pimpl->init_swapchain();
   _pimpl->init_commands();
   _pimpl->init_sync_structures();
 }
