@@ -1,5 +1,7 @@
 {
     "clangd.arguments": [
-        "--compile-commands-dir=${workspaceFolder}/build"
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--query-driver=**",
+        "--header-insertion=never"
     ]
 }

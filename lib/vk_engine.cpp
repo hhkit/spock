@@ -23,14 +23,11 @@ struct GLFWDeleter {
 
 constexpr bool use_validation_layers = true;
 static VulkanEngine *engine{};
-void error_callback(int error, const char *description) {
-  fprintf(stderr, "Error: %s\n", description);
-}
 
 struct VulkanEngine::impl {
   struct swapchain {
     vk::Extent2D extents;
-    vk::SwapchainKHR swapchain;
+    vk::UniqueSwapchainKHR swapchain;
     std::vector<vk::Image> images;
     std::vector<vk::UniqueImageView> image_views;
   };
@@ -39,11 +36,11 @@ struct VulkanEngine::impl {
   int _frameNumber{};
   vk::Extent2D _windowExtent{1700, 900};
 
-  vk::UniqueInstance _instance;
+  vk::Instance _instance;
   vk::UniqueDebugUtilsMessengerEXT _debug_messenger;
 
   vk::PhysicalDevice _chosen_gpu;
-  vk::UniqueDevice _device;
+  vk::Device _device;
   vk::UniqueSurfaceKHR _surface;
 
   std::optional<swapchain> _swapchain;
@@ -54,10 +51,11 @@ struct VulkanEngine::impl {
   impl() {}
 
   ~impl() noexcept {
+    _swapchain.reset();
     _surface.reset();
-    _device.reset();
+    _device.destroy();
     _debug_messenger.reset();
-    _instance.reset();
+    _instance.destroy();
     _window.reset();
   }
 
@@ -84,16 +82,16 @@ struct VulkanEngine::impl {
                         .build();
 
     auto vkb_inst = inst_ret.value();
-    _instance.reset(vkb_inst.instance);
-    assert(_instance.get());
-
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(_instance.get());
-    _debug_messenger = vk::UniqueDebugUtilsMessengerEXT(
-        vkb_inst.debug_messenger, _instance.get());
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance{vkb_inst.instance});
+    _instance = vkb_inst.instance;
+    assert(&VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyInstance);
+    assert(&VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyDebugUtilsMessengerEXT);
+    _debug_messenger =
+        vk::UniqueDebugUtilsMessengerEXT(vkb_inst.debug_messenger, _instance);
 
     VkSurfaceKHR surface;
-    glfwCreateWindowSurface(_instance.get(), _window.get(), nullptr, &surface);
-    _surface = vk::UniqueSurfaceKHR{surface, _instance.get()};
+    glfwCreateWindowSurface(_instance, _window.get(), nullptr, &surface);
+    _surface = vk::UniqueSurfaceKHR{surface, _instance};
 
     // vulkan 1.3 features
     VkPhysicalDeviceVulkan13Features features{
@@ -121,18 +119,22 @@ struct VulkanEngine::impl {
 
     // create the final vulkan device
     vkb::DeviceBuilder deviceBuilder{physicalDevice};
-
     vkb::Device vkbDevice = deviceBuilder.build().value();
 
     // Get the VkDevice handle used in the rest of a vulkan application
-    _device = vk::UniqueDevice{vkbDevice.device, _instance};
-    _chosen_gpu = physicalDevice.physical_device;
+    // VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Device{vkbDevice.device});
+    // _device = vk::UniqueDevice{vk::Device{vkbDevice.device}, _instance};
+    _device = vk::Device{vkbDevice.device};
 
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(_device.get());
+    _chosen_gpu = physicalDevice.physical_device;
+  }
+
+  void init_swapchain() {
+    _swapchain = create_swapchain(_windowExtent.width, _windowExtent.height);
   }
 
   swapchain create_swapchain(uint32_t width, uint32_t height) {
-    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device.get(),
+    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device,
                                            _surface.get()};
 
     vk::Format imageFormat = vk::Format::eB8G8R8A8Unorm;
@@ -157,6 +159,8 @@ struct VulkanEngine::impl {
       image_views.push_back(vk::UniqueImageView(image));
 
     return swapchain{.extents = vkbSwapchain.extent,
+                     .swapchain =
+                         vk::UniqueSwapchainKHR{vkbSwapchain.swapchain},
                      .images = std::move(images),
                      .image_views = std::move(image_views)};
   }
@@ -173,6 +177,7 @@ void VulkanEngine::init() {
   glfwInit();
   _pimpl = std::make_unique<impl>();
   _pimpl->init_vulkan();
+  // _pimpl->init_swapchain();
   _pimpl->init_commands();
   _pimpl->init_sync_structures();
 }
