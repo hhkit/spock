@@ -9,6 +9,6 @@
 int main() {
   spock::VulkanEngine engine;
   engine.init();
-  engine.draw();
+  engine.run();
   engine.destroy();
 }
