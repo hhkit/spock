@@ -1,19 +1,15 @@
 #include <cassert>
 #include <cstdint>
+#include <optional>
 
-#include <vulkan/vulkan_enums.hpp>
-#include <vulkan/vulkan_structs.hpp>
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_core.h>
-#include <vulkan/vulkan_handles.hpp>
-#include <vulkan/vulkan_structs.hpp>
+#include <vulkan/vulkan_enums.hpp>
 
 #include "VkBootstrap.h"
 #include <GLFW/glfw3.h>
 #include <vk_engine.h>
 
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
 
 namespace spock {
 
@@ -35,6 +31,8 @@ struct VulkanEngine::impl {
   struct swapchain {
     vk::Extent2D extents;
     vk::SwapchainKHR swapchain;
+    std::vector<vk::Image> images;
+    std::vector<vk::UniqueImageView> image_views;
   };
 
   std::unique_ptr<GLFWwindow, detail::GLFWDeleter> _window;
@@ -48,7 +46,7 @@ struct VulkanEngine::impl {
   vk::UniqueDevice _device;
   vk::UniqueSurfaceKHR _surface;
 
-  swapchain _swapchain;
+  std::optional<swapchain> _swapchain;
 
   void init_commands() {}
   void init_sync_structures() {}
@@ -64,6 +62,8 @@ struct VulkanEngine::impl {
   }
 
   void init_vulkan() {
+    VULKAN_HPP_DEFAULT_DISPATCHER.init();
+
     glfwSetErrorCallback(+[](int error, const char *desc) {
       fprintf(stderr, "Error: %s\n", desc);
     });
@@ -84,8 +84,10 @@ struct VulkanEngine::impl {
                         .build();
 
     auto vkb_inst = inst_ret.value();
-
     _instance.reset(vkb_inst.instance);
+    assert(_instance.get());
+
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(_instance.get());
     _debug_messenger = vk::UniqueDebugUtilsMessengerEXT(
         vkb_inst.debug_messenger, _instance.get());
 
@@ -125,10 +127,13 @@ struct VulkanEngine::impl {
     // Get the VkDevice handle used in the rest of a vulkan application
     _device = vk::UniqueDevice{vkbDevice.device, _instance};
     _chosen_gpu = physicalDevice.physical_device;
+
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(_device.get());
   }
 
   swapchain create_swapchain(uint32_t width, uint32_t height) {
-    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device, _surface};
+    vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device.get(),
+                                           _surface.get()};
 
     vk::Format imageFormat = vk::Format::eB8G8R8A8Unorm;
 
@@ -136,14 +141,24 @@ struct VulkanEngine::impl {
         swapchainBuilder
             //.use_default_format_selection()
             .set_desired_format(vk::SurfaceFormatKHR{
-                .format = imageFormat,
-                .colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear})
+                imageFormat, vk::ColorSpaceKHR::eSrgbNonlinear})
             // use vsync present mode
             .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
             .set_desired_extent(width, height)
             .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
             .build()
             .value();
+
+    std::vector<vk::Image> images;
+    std::vector<vk::UniqueImageView> image_views;
+    for (auto image : vkbSwapchain.get_images().value())
+      images.push_back(vk::Image(image));
+    for (auto image : vkbSwapchain.get_image_views().value())
+      image_views.push_back(vk::UniqueImageView(image));
+
+    return swapchain{.extents = vkbSwapchain.extent,
+                     .images = std::move(images),
+                     .image_views = std::move(image_views)};
   }
 };
 
@@ -153,7 +168,6 @@ VulkanEngine::~VulkanEngine() noexcept = default;
 void VulkanEngine::init() {
   assert(_pimpl == nullptr && "already initialized");
   assert(engine == nullptr && "engine already initialized");
-  VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
   engine = this;
   glfwInit();
