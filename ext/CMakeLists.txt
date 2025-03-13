@@ -1,9 +1,15 @@
-add_subdirectory(VulkanMemoryAllocator)
-
 # stb
 add_library(StbImage INTERFACE)
 add_library(stb::Image ALIAS StbImage)
 target_include_directories(StbImage INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/stb>)
+
+
+# VulkanMemoryAllocator
+FetchContent_Declare(
+    VulkanMemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+    GIT_TAG v3.2.1)
+FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
 # vk-bootstrap
 FetchContent_Declare(
