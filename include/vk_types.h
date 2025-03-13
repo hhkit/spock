@@ -20,9 +20,9 @@
 
 #define VK_CHECK(x)                                                            \
   do {                                                                         \
-    VkResult err = x;                                                          \
-    if (err) {                                                                 \
-      fmt::print("Detected Vulkan error: {}", string_VkResult(err));           \
+    vk::Result err = x;                                                        \
+    if (err != vk::Result::eSuccess) {                                         \
+      fmt::print("Detected Vulkan error: {}", vk::to_string(err));             \
       abort();                                                                 \
     }                                                                          \
   } while (0)

@@ -3,13 +3,10 @@
 #include <optional>
 
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_enums.hpp>
 
 #include "VkBootstrap.h"
 #include <GLFW/glfw3.h>
 #include <vk_engine.h>
-
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
 
 namespace spock {
 
@@ -32,6 +29,15 @@ struct VulkanEngine::impl {
     std::vector<vk::UniqueImageView> image_views;
   };
 
+  struct frame_data {
+    vk::UniqueCommandPool _commandPool;
+    std::vector<vk::UniqueCommandBuffer> _commmandBuffer;
+
+    vk::UniqueSemaphore _swapchainSemaphore, _renderSemaphore;
+    vk::UniqueFence _renderFence;
+  };
+
+  static constexpr unsigned int FRAME_OVERLAP = 2;
   std::unique_ptr<GLFWwindow, detail::GLFWDeleter> _window;
   int _frameNumber{};
   vk::Extent2D _windowExtent{1700, 900};
@@ -45,12 +51,18 @@ struct VulkanEngine::impl {
 
   std::optional<swapchain> _swapchain;
 
-  void init_commands() {}
-  void init_sync_structures() {}
+  std::array<frame_data, FRAME_OVERLAP> _frames;
+  vk::Queue _graphics_queue;
+  uint32_t _graphics_queue_family;
 
-  impl() {}
+  impl() {
+    init_vulkan();
+    init_swapchain();
+    init_commands();
+    init_sync_structures();
+  }
 
-  ~impl() noexcept {}
+  ~impl() noexcept { _device->waitIdle(); }
 
   void init_vulkan() {
     const auto orphan_destroyer =
@@ -122,13 +134,41 @@ struct VulkanEngine::impl {
     _device = vk::UniqueDevice{vkbDevice.device, orphan_destroyer};
 
     _chosen_gpu = physicalDevice.physical_device;
+
+    _graphics_queue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+    _graphics_queue_family =
+        vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
   }
 
   void init_swapchain() {
     _swapchain = create_swapchain(_windowExtent.width, _windowExtent.height);
   }
 
-  swapchain create_swapchain(uint32_t width, uint32_t height) {
+  void init_commands() {
+    // create a command pool for commands submitted to the graphics queue.
+    // we also want the pool to allow for resetting of individual command
+    // buffers
+
+    for (auto &frame : _frames) {
+      frame._commandPool = _device->createCommandPoolUnique(
+          {vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+           _graphics_queue_family});
+
+      frame._commmandBuffer =
+          _device->allocateCommandBuffersUnique(vk::CommandBufferAllocateInfo{
+              frame._commandPool.get(), vk::CommandBufferLevel::ePrimary, 1});
+    }
+  }
+  void init_sync_structures() {
+    for (auto &frame : _frames) {
+      frame._renderFence = _device->createFenceUnique(
+          vk::FenceCreateInfo{vk::FenceCreateFlagBits::eSignaled});
+      frame._swapchainSemaphore = _device->createSemaphoreUnique({});
+      frame._renderSemaphore = _device->createSemaphoreUnique({});
+    }
+  }
+
+  swapchain create_swapchain(uint32_t width, uint32_t height) const {
     vkb::SwapchainBuilder swapchainBuilder{_chosen_gpu, _device.get(),
                                            _surface.get()};
 
@@ -159,6 +199,97 @@ struct VulkanEngine::impl {
                      .images = std::move(images),
                      .image_views = std::move(image_views)};
   }
+
+  frame_data &get_current_frame() {
+    return _frames[_frameNumber % FRAME_OVERLAP];
+  };
+
+  void draw() {
+    fmt::println("frame: {}", _frameNumber);
+    auto &curr_frame = get_current_frame();
+    auto &device = *_device;
+    VK_CHECK(device.waitForFences(1, &curr_frame._renderFence.get(), true,
+                                  1000000000));
+    VK_CHECK(device.resetFences(1, &curr_frame._renderFence.get()));
+    auto swapchainImageIndex =
+        device.acquireNextImageKHR(_swapchain->swapchain.get(), 1000000000,
+                                   curr_frame._swapchainSemaphore.get(), {});
+    VK_CHECK(swapchainImageIndex.result);
+
+    auto &cmd_buff = *curr_frame._commmandBuffer[0];
+    cmd_buff.reset();
+    cmd_buff.begin(vk::CommandBufferBeginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+    transition_image(cmd_buff, _swapchain->images[swapchainImageIndex.value],
+                     vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
+    auto flash = std::abs(std::sin(_frameNumber / 20.f));
+    vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
+
+    auto clearRange =
+        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor};
+    cmd_buff.clearColorImage(_swapchain->images[swapchainImageIndex.value],
+                             vk::ImageLayout::eGeneral, clearValue, clearRange);
+
+    transition_image(cmd_buff, _swapchain->images[swapchainImageIndex.value],
+                     vk::ImageLayout::eGeneral,
+                     vk::ImageLayout::ePresentSrcKHR);
+
+    cmd_buff.end();
+
+    vk::CommandBufferSubmitInfo cmdInfo{cmd_buff};
+    vk::SemaphoreSubmitInfo waitInfo{
+        curr_frame._swapchainSemaphore.get(),
+        1,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        0,
+    };
+    vk::SemaphoreSubmitInfo signalInfo{
+        curr_frame._renderSemaphore.get(),
+        1,
+        vk::PipelineStageFlagBits2::eAllGraphics,
+        0,
+    };
+
+    _graphics_queue.submit2(
+        vk::SubmitInfo2{
+            {},
+            waitInfo,
+            cmdInfo,
+            signalInfo,
+        },
+        curr_frame._renderFence.get());
+
+    VK_CHECK(_graphics_queue.presentKHR({
+        curr_frame._renderSemaphore.get(),
+        _swapchain->swapchain.get(),
+        swapchainImageIndex.value,
+    }));
+
+    _frameNumber++;
+  }
+
+  void transition_image(vk::CommandBuffer &cmd, vk::Image image,
+                        vk::ImageLayout currentLayout,
+                        vk::ImageLayout newLayout) {
+    vk::ImageMemoryBarrier2 imageBarrier{
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::AccessFlagBits2::eMemoryWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eMemoryRead,
+        currentLayout,
+        newLayout,
+        0,
+        0,
+        image,
+        vk::ImageSubresourceRange{
+            newLayout == vk::ImageLayout::eDepthAttachmentOptimal
+                ? vk::ImageAspectFlagBits::eDepth
+                : vk::ImageAspectFlagBits::eColor,
+        }};
+
+    cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, imageBarrier});
+  }
 };
 
 VulkanEngine::VulkanEngine() = default;
@@ -171,10 +302,6 @@ void VulkanEngine::init() {
   engine = this;
   glfwInit();
   _pimpl = std::make_unique<impl>();
-  _pimpl->init_vulkan();
-  _pimpl->init_swapchain();
-  _pimpl->init_commands();
-  _pimpl->init_sync_structures();
 }
 
 void VulkanEngine::destroy() {
@@ -199,5 +326,6 @@ void VulkanEngine::run() {
 void VulkanEngine::draw() {
   // glfwSwapBuffers(_pimpl->_window);
   glfwPollEvents();
+  _pimpl->draw();
 }
 } // namespace spock

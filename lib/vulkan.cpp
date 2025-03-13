@@ -1,6 +1,4 @@
 
 #include <vulkan/vulkan.hpp>
 
-void init_vulkan() {
-  // VULKAN_HPP_DEFAULT_DISPATCHER.init();
-}
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE;
