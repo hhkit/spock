@@ -226,8 +226,11 @@ struct VulkanEngine::impl {
     auto flash = std::abs(std::sin(_frameNumber / 20.f));
     vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
 
-    auto clearRange =
-        vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor};
+    auto clearRange = vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
+                                                {},
+                                                vk::RemainingMipLevels,
+                                                {},
+                                                vk::RemainingArrayLayers};
     cmd_buff.clearColorImage(_swapchain->images[swapchainImageIndex.value],
                              vk::ImageLayout::eGeneral, clearValue, clearRange);
 
