@@ -16,6 +16,27 @@ struct GLFWDeleter {
     return glfwDestroyWindow(window);
   }
 };
+
+class UniqueVmaAllocator {
+public:
+  UniqueVmaAllocator() {}
+  explicit UniqueVmaAllocator(VmaAllocatorCreateInfo createInfo) {
+    vmaCreateAllocator(&createInfo, &allocator);
+  }
+  UniqueVmaAllocator(UniqueVmaAllocator &&other) : UniqueVmaAllocator{} {
+    std::swap(other.allocator, allocator);
+  }
+  UniqueVmaAllocator &operator=(UniqueVmaAllocator &&other) {
+    std::swap(other.allocator, allocator);
+    return *this;
+  }
+  ~UniqueVmaAllocator() noexcept { vmaDestroyAllocator(allocator); }
+
+  operator VmaAllocator() const noexcept { return allocator; }
+
+private:
+  VmaAllocator allocator{};
+};
 } // namespace detail
 
 constexpr bool use_validation_layers = true;
@@ -37,10 +58,69 @@ struct VulkanEngine::impl {
     vk::UniqueFence _renderFence;
   };
 
+  struct allocated_image {
+    vk::Image image;
+    vk::UniqueImageView imageView;
+    VmaAllocation allocation{};
+    VmaAllocator allocator{};
+    vk::Extent3D extents;
+    vk::Format format;
+
+    allocated_image() noexcept = default;
+    allocated_image(VmaAllocator allocator,
+                    const VkImageCreateInfo &imageCreateInfo,
+                    const VmaAllocationCreateInfo &allocCreateInfo,
+                    vk::Device device)
+        : allocator{allocator} {
+      VkImage img;
+      vmaCreateImage(allocator, &imageCreateInfo, &allocCreateInfo, &img,
+                     &allocation, nullptr);
+      image = vk::Image{img};
+      imageView = device.createImageViewUnique(vk::ImageViewCreateInfo{
+          {},
+          image,
+          vk::ImageViewType::e2D,
+          format,
+          {},
+          vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0,
+                                    1}});
+    }
+
+    allocated_image(allocated_image &&rhs) noexcept
+        : image{rhs.image}, imageView{std::move(rhs.imageView)},
+          allocation{rhs.allocation}, allocator{rhs.allocator},
+          extents{rhs.extents}, format{rhs.format} {
+      rhs.allocation = nullptr;
+    }
+
+    allocated_image &operator=(allocated_image &&rhs) noexcept {
+      std::swap(image, rhs.image);
+      std::swap(imageView, rhs.imageView);
+      std::swap(allocation, rhs.allocation);
+      std::swap(allocator, rhs.allocator);
+      std::swap(extents, rhs.extents);
+      std::swap(format, rhs.format);
+      return *this;
+    }
+
+    ~allocated_image() noexcept {
+      if (imageView || allocation) {
+        assert(imageView && allocation);
+        imageView.reset();
+        vmaDestroyImage(allocator, image, allocation);
+      }
+    }
+  };
+
+  struct draw_resources {
+    allocated_image draw_image;
+    vk::Extent2D draw_extent;
+  };
+
   static constexpr unsigned int FRAME_OVERLAP = 2;
   std::unique_ptr<GLFWwindow, detail::GLFWDeleter> _window;
   int _frameNumber{};
-  vk::Extent2D _windowExtent{1700, 900};
+  vk::Extent2D _windowExtent{800, 600};
 
   vk::UniqueInstance _instance;
   vk::UniqueDebugUtilsMessengerEXT _debug_messenger;
@@ -54,6 +134,10 @@ struct VulkanEngine::impl {
   std::array<frame_data, FRAME_OVERLAP> _frames;
   vk::Queue _graphics_queue;
   uint32_t _graphics_queue_family;
+
+  detail::UniqueVmaAllocator _allocator{};
+
+  std::optional<draw_resources> _draw_resources;
 
   impl() {
     init_vulkan();
@@ -112,7 +196,7 @@ struct VulkanEngine::impl {
     features12.descriptorIndexing = true;
 
     // use vkbootstrap to select a gpu.
-    // We want a gpu that can write to the SDL surface and supports vulkan 1.3
+    // We want a gpu that can write to the GLFW surface and supports vulkan 1.3
     // with the correct features
     vkb::PhysicalDeviceSelector selector{vkb_inst};
     vkb::PhysicalDevice physicalDevice =
@@ -138,10 +222,41 @@ struct VulkanEngine::impl {
     _graphics_queue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
     _graphics_queue_family =
         vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+
+    _allocator = detail::UniqueVmaAllocator({
+        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = _chosen_gpu,
+        .device = _device.get(),
+        .instance = _instance.get(),
+    });
   }
 
   void init_swapchain() {
     _swapchain = create_swapchain(_windowExtent.width, _windowExtent.height);
+
+    vk::Extent3D drawImageExtent{_windowExtent, 1};
+
+    auto drawImage = allocated_image{
+        _allocator,
+        vk::ImageCreateInfo{{},
+                            vk::ImageType::e2D,
+                            vk::Format::eR16G16B16A16Sfloat,
+                            drawImageExtent,
+                            1,
+                            1,
+                            vk::SampleCountFlagBits::e1,
+                            vk::ImageTiling::eOptimal,
+                            vk::ImageUsageFlagBits::eTransferSrc |
+                                vk::ImageUsageFlagBits::eTransferDst |
+                                vk::ImageUsageFlagBits::eStorage |
+                                vk::ImageUsageFlagBits::eColorAttachment},
+        VmaAllocationCreateInfo{
+            .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags =
+                VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+        },
+        _device.get()};
+    this->_draw_resources = draw_resources{std::move(drawImage), _windowExtent};
   }
 
   void init_commands() {
@@ -223,19 +338,15 @@ struct VulkanEngine::impl {
 
     transition_image(cmd_buff, _swapchain->images[swapchainImageIndex.value],
                      vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
-    auto flash = std::abs(std::sin(_frameNumber / 20.f));
-    vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
-
-    auto clearRange = vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
-                                                {},
-                                                vk::RemainingMipLevels,
-                                                {},
-                                                vk::RemainingArrayLayers};
-    cmd_buff.clearColorImage(_swapchain->images[swapchainImageIndex.value],
-                             vk::ImageLayout::eGeneral, clearValue, clearRange);
-
+    draw_background(cmd_buff);
     transition_image(cmd_buff, _swapchain->images[swapchainImageIndex.value],
                      vk::ImageLayout::eGeneral,
+                     vk::ImageLayout::eTransferSrcOptimal);
+    copy_image_to_image(cmd_buff, _draw_resources->draw_image.image,
+                        _swapchain->images[swapchainImageIndex.value],
+                        _draw_resources->draw_extent, _swapchain->extents);
+    transition_image(cmd_buff, _swapchain->images[swapchainImageIndex.value],
+                     vk::ImageLayout::eTransferDstOptimal,
                      vk::ImageLayout::ePresentSrcKHR);
 
     cmd_buff.end();
@@ -272,7 +383,7 @@ struct VulkanEngine::impl {
     _frameNumber++;
   }
 
-  void transition_image(vk::CommandBuffer &cmd, vk::Image image,
+  void transition_image(vk::CommandBuffer cmd, vk::Image image,
                         vk::ImageLayout currentLayout,
                         vk::ImageLayout newLayout) {
     vk::ImageMemoryBarrier2 imageBarrier{
@@ -292,6 +403,35 @@ struct VulkanEngine::impl {
         }};
 
     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, imageBarrier});
+  }
+
+  void copy_image_to_image(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
+                           vk::Extent2D srcSize, vk::Extent2D dstSize) {
+    vk::ImageBlit2KHR blitRegion{
+        vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        {vk::Offset3D{},
+         vk::Offset3D{(int)srcSize.width, (int)srcSize.height, 1}},
+        vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        {vk::Offset3D{},
+         vk::Offset3D{(int)dstSize.width, (int)dstSize.height, 1}},
+    };
+
+    cmd.blitImage2(vk::BlitImageInfo2{src, vk::ImageLayout::eTransferSrcOptimal,
+                                      dst, vk::ImageLayout::eTransferDstOptimal,
+                                      blitRegion, vk::Filter::eLinear});
+  }
+
+  void draw_background(vk::CommandBuffer cmd) {
+    auto flash = std::abs(std::sin(_frameNumber / 20.f));
+    vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
+
+    auto clearRange = vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
+                                                {},
+                                                vk::RemainingMipLevels,
+                                                {},
+                                                vk::RemainingArrayLayers};
+    cmd.clearColorImage(_draw_resources->draw_image.image,
+                        vk::ImageLayout::eGeneral, clearValue, clearRange);
   }
 };
 
