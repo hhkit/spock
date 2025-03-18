@@ -10,6 +10,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 include(FetchContent)
 
+# utils 
+include(cmake/FindSlang.cmake)
+include(cmake/SlangUtils.cmake)
+
 add_subdirectory(ext)
 
 add_subdirectory(lib)

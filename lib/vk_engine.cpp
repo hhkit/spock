@@ -320,7 +320,6 @@ struct VulkanEngine::impl {
   };
 
   void draw() {
-    fmt::println("frame: {}", _frameNumber);
     auto &curr_frame = get_current_frame();
     auto &device = *_device;
     VK_CHECK(device.waitForFences(1, &curr_frame._renderFence.get(), true,
