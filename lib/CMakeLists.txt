@@ -2,7 +2,9 @@ add_subdirectory(shaders)
 
 add_executable(spock 
     driver.cpp
+    vk_descriptors.cpp
     vk_engine.cpp
+    vk_util.cpp
     ext/stb.cpp
     ext/vma.cpp
     ext/vulkan.cpp

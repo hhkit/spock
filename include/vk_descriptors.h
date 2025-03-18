@@ -11,4 +11,22 @@ struct DescriptorLayoutBuilder {
   build(vk::Device device, vk::ShaderStageFlags shaderStages,
         void *pNext = nullptr, vk::DescriptorSetLayoutCreateFlags flags = {});
 };
+
+struct DescriptorAllocator {
+
+  struct PoolSizeRatio {
+    vk::DescriptorType type;
+    float ratio;
+  };
+
+  vk::UniqueDescriptorPool pool;
+
+  void init_pool(vk::Device device, uint32_t maxSets,
+                 std::span<PoolSizeRatio> poolRatios);
+  void clear_descriptors(vk::Device device);
+
+  vk::UniqueDescriptorSet allocate(vk::Device device,
+                                   vk::DescriptorSetLayout layout);
+};
+
 } // namespace spock

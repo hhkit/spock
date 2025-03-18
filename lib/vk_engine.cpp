@@ -6,7 +6,9 @@
 
 #include "VkBootstrap.h"
 #include <GLFW/glfw3.h>
+#include <vk_descriptors.h>
 #include <vk_engine.h>
+#include <vk_util.h>
 
 namespace spock {
 
@@ -117,6 +119,17 @@ struct VulkanEngine::impl {
     vk::Extent2D draw_extent;
   };
 
+  struct descriptor_resources {
+    DescriptorAllocator globalDescriptorAllocator;
+    vk::UniqueDescriptorSet _drawImageDescriptors;
+    vk::UniqueDescriptorSetLayout _drawImageDescriptorLayout;
+  };
+
+  struct pipeline_resources {
+    vk::UniquePipeline gradient_pipeline;
+    vk::UniquePipelineLayout gradient_pipeline_layout;
+  };
+
   static constexpr unsigned int FRAME_OVERLAP = 2;
   std::unique_ptr<GLFWwindow, detail::GLFWDeleter> _window;
   int _frameNumber{};
@@ -138,12 +151,16 @@ struct VulkanEngine::impl {
   detail::UniqueVmaAllocator _allocator{};
 
   std::optional<draw_resources> _draw_resources;
+  std::optional<descriptor_resources> _descriptor_resources;
+  pipeline_resources _pipeline_resources;
 
   impl() {
     init_vulkan();
     init_swapchain();
     init_commands();
     init_sync_structures();
+    init_descriptors();
+    init_pipelines();
   }
 
   ~impl() noexcept { _device->waitIdle(); }
@@ -274,6 +291,7 @@ struct VulkanEngine::impl {
               frame._commandPool.get(), vk::CommandBufferLevel::ePrimary, 1});
     }
   }
+
   void init_sync_structures() {
     for (auto &frame : _frames) {
       frame._renderFence = _device->createFenceUnique(
@@ -281,6 +299,62 @@ struct VulkanEngine::impl {
       frame._swapchainSemaphore = _device->createSemaphoreUnique({});
       frame._renderSemaphore = _device->createSemaphoreUnique({});
     }
+  }
+
+  void init_descriptors() {
+    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {
+        {vk::DescriptorType::eStorageImage, 1}};
+
+    _descriptor_resources.emplace();
+    _descriptor_resources->globalDescriptorAllocator.init_pool(*_device, 10,
+                                                               sizes);
+
+    // make the descriptor set layout for our compute draw
+    {
+      DescriptorLayoutBuilder builder;
+      builder.add_binding(0, vk::DescriptorType::eStorageImage);
+      _descriptor_resources->_drawImageDescriptorLayout =
+          builder.build(*_device, vk::ShaderStageFlagBits::eCompute);
+    }
+
+    _descriptor_resources->_drawImageDescriptors =
+        _descriptor_resources->globalDescriptorAllocator.allocate(
+            *_device, *_descriptor_resources->_drawImageDescriptorLayout);
+
+    vk::DescriptorImageInfo imgInfo{
+        {}, *_draw_resources->draw_image.imageView, vk::ImageLayout::eGeneral};
+    vk::WriteDescriptorSet diw{*_descriptor_resources->_drawImageDescriptors,
+                               0,
+                               {},
+                               1,
+                               vk::DescriptorType::eStorageImage,
+                               &imgInfo};
+
+    _device->updateDescriptorSets(diw, {});
+  }
+
+  void init_pipelines() { init_background_pipelines(); }
+
+  void init_background_pipelines() {
+    _pipeline_resources.gradient_pipeline_layout =
+        _device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{
+            {}, *_descriptor_resources->_drawImageDescriptorLayout, {}});
+
+    auto shader = vkutil::load_shader_module(
+        std::filesystem::current_path() / "shaders/tutorial.spv", *_device);
+    if (!shader) {
+      fmt::println("Error building compute shader");
+    }
+
+    vk::PipelineShaderStageCreateInfo stageInfo{
+        {}, vk::ShaderStageFlagBits::eCompute, **shader, "main"};
+    vk::ComputePipelineCreateInfo computePipelineCreateInfo{
+        {}, stageInfo, *_pipeline_resources.gradient_pipeline_layout};
+    auto res =
+        _device->createComputePipelineUnique({}, computePipelineCreateInfo);
+
+    VK_CHECK(res.result);
+    _pipeline_resources.gradient_pipeline = std::move(res.value);
   }
 
   swapchain create_swapchain(uint32_t width, uint32_t height) const {
@@ -421,16 +495,25 @@ struct VulkanEngine::impl {
   }
 
   void draw_background(vk::CommandBuffer cmd) {
-    auto flash = std::abs(std::sin(_frameNumber / 20.f));
-    vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
+    // auto flash = std::abs(std::sin(_frameNumber / 20.f));
+    // vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
 
-    auto clearRange = vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
-                                                {},
-                                                vk::RemainingMipLevels,
-                                                {},
-                                                vk::RemainingArrayLayers};
-    cmd.clearColorImage(_draw_resources->draw_image.image,
-                        vk::ImageLayout::eGeneral, clearValue, clearRange);
+    // auto clearRange =
+    // vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
+    //                                             {},
+    //                                             vk::RemainingMipLevels,
+    //                                             {},
+    //                                             vk::RemainingArrayLayers};
+    // cmd.clearColorImage(_draw_resources->draw_image.image,
+    //                     vk::ImageLayout::eGeneral, clearValue, clearRange);
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute,
+                     *_pipeline_resources.gradient_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                           *_pipeline_resources.gradient_pipeline_layout, 0,
+                           *_descriptor_resources->_drawImageDescriptors, {});
+    cmd.dispatch(std::ceil(_draw_resources->draw_extent.width / 16.0),
+                 std::ceil(_draw_resources->draw_extent.height / 16.0), 1);
   }
 };
 
