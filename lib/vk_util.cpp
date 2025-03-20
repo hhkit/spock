@@ -3,12 +3,12 @@
 
 namespace spock::vkutil {
 
-std::optional<vk::UniqueShaderModule>
-load_shader_module(std::filesystem::path filePath, vk::Device device) {
+vk::UniqueShaderModule load_shader_module(std::filesystem::path filePath,
+                                          vk::Device device) {
   std::ifstream file(filePath, std::ios::ate | std::ios::binary);
 
   if (!file.is_open())
-    return std::nullopt;
+    return {};
 
   // find what the size of the file is by looking up the location of the cursor
   // because the cursor is at the end, it gives the size directly in bytes

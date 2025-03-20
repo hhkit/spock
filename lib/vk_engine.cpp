@@ -302,35 +302,34 @@ struct VulkanEngine::impl {
   }
 
   void init_descriptors() {
+    descriptor_resources descriptor;
     std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {
         {vk::DescriptorType::eStorageImage, 1}};
 
-    _descriptor_resources.emplace();
-    _descriptor_resources->globalDescriptorAllocator.init_pool(*_device, 10,
-                                                               sizes);
+    descriptor.globalDescriptorAllocator.init_pool(*_device, 10, sizes);
 
     // make the descriptor set layout for our compute draw
     {
       DescriptorLayoutBuilder builder;
       builder.add_binding(0, vk::DescriptorType::eStorageImage);
-      _descriptor_resources->_drawImageDescriptorLayout =
+      descriptor._drawImageDescriptorLayout =
           builder.build(*_device, vk::ShaderStageFlagBits::eCompute);
     }
 
-    _descriptor_resources->_drawImageDescriptors =
-        _descriptor_resources->globalDescriptorAllocator.allocate(
-            *_device, *_descriptor_resources->_drawImageDescriptorLayout);
+    descriptor._drawImageDescriptors =
+        descriptor.globalDescriptorAllocator.allocate(
+            *_device, *descriptor._drawImageDescriptorLayout);
+    assert(descriptor._drawImageDescriptors);
 
     vk::DescriptorImageInfo imgInfo{
         {}, *_draw_resources->draw_image.imageView, vk::ImageLayout::eGeneral};
-    vk::WriteDescriptorSet diw{*_descriptor_resources->_drawImageDescriptors,
-                               0,
-                               {},
-                               1,
-                               vk::DescriptorType::eStorageImage,
-                               &imgInfo};
+    vk::WriteDescriptorSet drawImageWrite{*descriptor._drawImageDescriptors, 0,
+                                          0, vk::DescriptorType::eStorageImage,
+                                          imgInfo};
 
-    _device->updateDescriptorSets(diw, {});
+    _device->updateDescriptorSets(drawImageWrite, {});
+
+    _descriptor_resources = std::move(descriptor);
   }
 
   void init_pipelines() { init_background_pipelines(); }
@@ -341,13 +340,13 @@ struct VulkanEngine::impl {
             {}, *_descriptor_resources->_drawImageDescriptorLayout, {}});
 
     auto shader = vkutil::load_shader_module(
-        std::filesystem::current_path() / "shaders/tutorial.spv", *_device);
+        std::filesystem::current_path() / "shaders/a.spv", *_device);
     if (!shader) {
       fmt::println("Error building compute shader");
     }
 
     vk::PipelineShaderStageCreateInfo stageInfo{
-        {}, vk::ShaderStageFlagBits::eCompute, **shader, "main"};
+        {}, vk::ShaderStageFlagBits::eCompute, *shader, "main"};
     vk::ComputePipelineCreateInfo computePipelineCreateInfo{
         {}, stageInfo, *_pipeline_resources.gradient_pipeline_layout};
     auto res =
@@ -495,15 +494,14 @@ struct VulkanEngine::impl {
   }
 
   void draw_background(vk::CommandBuffer cmd) {
-    // auto flash = std::abs(std::sin(_frameNumber / 20.f));
-    // vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
+    auto flash = std::abs(std::sin(_frameNumber / 20.f));
+    vk::ClearColorValue clearValue{1.f, 0.f, flash, 1.f};
 
-    // auto clearRange =
-    // vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
-    //                                             {},
-    //                                             vk::RemainingMipLevels,
-    //                                             {},
-    //                                             vk::RemainingArrayLayers};
+    auto clearRange = vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor,
+                                                {},
+                                                vk::RemainingMipLevels,
+                                                {},
+                                                vk::RemainingArrayLayers};
     // cmd.clearColorImage(_draw_resources->draw_image.image,
     //                     vk::ImageLayout::eGeneral, clearValue, clearRange);
 
