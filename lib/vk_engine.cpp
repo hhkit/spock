@@ -211,6 +211,7 @@ struct VulkanEngine::impl {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features12.bufferDeviceAddress = true;
     features12.descriptorIndexing = true;
+    features12.shaderFloat16 = true;
 
     // use vkbootstrap to select a gpu.
     // We want a gpu that can write to the GLFW surface and supports vulkan 1.3
@@ -255,18 +256,16 @@ struct VulkanEngine::impl {
 
     auto drawImage = allocated_image{
         _allocator,
-        vk::ImageCreateInfo{{},
-                            vk::ImageType::e2D,
-                            vk::Format::eR16G16B16A16Sfloat,
-                            drawImageExtent,
-                            1,
-                            1,
-                            vk::SampleCountFlagBits::e1,
+        vk::ImageCreateInfo{vk::ImageCreateFlagBits::eMutableFormat,
+                            vk::ImageType::e2D, vk::Format::eR16G16B16A16Sfloat,
+                            drawImageExtent, 1, 1, vk::SampleCountFlagBits::e1,
                             vk::ImageTiling::eOptimal,
                             vk::ImageUsageFlagBits::eTransferSrc |
                                 vk::ImageUsageFlagBits::eTransferDst |
                                 vk::ImageUsageFlagBits::eStorage |
-                                vk::ImageUsageFlagBits::eColorAttachment},
+                                vk::ImageUsageFlagBits::eColorAttachment,
+                            vk::SharingMode::eExclusive, 0, 0,
+                            vk::ImageLayout::ePreinitialized},
         VmaAllocationCreateInfo{
             .usage = VMA_MEMORY_USAGE_GPU_ONLY,
             .requiredFlags =
@@ -320,7 +319,7 @@ struct VulkanEngine::impl {
         descriptor.globalDescriptorAllocator.allocate(
             *_device, *descriptor._drawImageDescriptorLayout);
     assert(descriptor._drawImageDescriptors);
-
+    vk::DescriptorSetLayoutBinding{};
     vk::DescriptorImageInfo imgInfo{
         {}, *_draw_resources->draw_image.imageView, vk::ImageLayout::eGeneral};
     vk::WriteDescriptorSet drawImageWrite{*descriptor._drawImageDescriptors, 0,
@@ -340,7 +339,7 @@ struct VulkanEngine::impl {
             {}, *_descriptor_resources->_drawImageDescriptorLayout, {}});
 
     auto shader = vkutil::load_shader_module(
-        std::filesystem::current_path() / "shaders/a.spv", *_device);
+        std::filesystem::current_path() / "shaders/tutorial.spv", *_device);
     if (!shader) {
       fmt::println("Error building compute shader");
     }
@@ -472,6 +471,10 @@ struct VulkanEngine::impl {
             newLayout == vk::ImageLayout::eDepthAttachmentOptimal
                 ? vk::ImageAspectFlagBits::eDepth
                 : vk::ImageAspectFlagBits::eColor,
+            0,
+            vk::RemainingMipLevels,
+            0,
+            vk::RemainingArrayLayers,
         }};
 
     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, imageBarrier});
@@ -502,8 +505,8 @@ struct VulkanEngine::impl {
                                                 vk::RemainingMipLevels,
                                                 {},
                                                 vk::RemainingArrayLayers};
-    // cmd.clearColorImage(_draw_resources->draw_image.image,
-    //                     vk::ImageLayout::eGeneral, clearValue, clearRange);
+    cmd.clearColorImage(_draw_resources->draw_image.image,
+                        vk::ImageLayout::eGeneral, clearValue, clearRange);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute,
                      *_pipeline_resources.gradient_pipeline);
@@ -547,7 +550,6 @@ void VulkanEngine::run() {
 }
 
 void VulkanEngine::draw() {
-  // glfwSwapBuffers(_pimpl->_window);
   glfwPollEvents();
   _pimpl->draw();
 }

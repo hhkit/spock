@@ -3,7 +3,7 @@
 namespace spock {
 void DescriptorLayoutBuilder::add_binding(uint32_t binding,
                                           vk::DescriptorType type) {
-  vk::DescriptorSetLayoutBinding newbind{binding, type};
+  vk::DescriptorSetLayoutBinding newbind{binding, type, 1};
   bindings.push_back(newbind);
 }
 
@@ -29,8 +29,9 @@ void DescriptorAllocator::init_pool(vk::Device device, uint32_t maxSets,
         vk::DescriptorPoolSize{ratio.type, uint32_t(ratio.ratio * maxSets)});
   };
 
-  pool = device.createDescriptorPoolUnique(
-      vk::DescriptorPoolCreateInfo{{}, maxSets, poolSizes});
+  pool = device.createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{
+      vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, maxSets,
+      poolSizes});
 }
 
 void DescriptorAllocator::clear_descriptors(vk::Device device) {
