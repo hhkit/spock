@@ -27,8 +27,8 @@ void computeMain(uint3 threadId : SV_DispatchThreadID
 
       if(threadId.x != 0 && threadId.y != 0)
       {
-          color.x = float(texelCoord.x)/(size.x);
-          color.y = float(texelCoord.y)/(size.y);
+          color.x = float(texelCoord.x)/size.x;
+          color.y = float(texelCoord.y)/size.y;
       }
       
       // var blend = float(texelCoord.y) / size.y;

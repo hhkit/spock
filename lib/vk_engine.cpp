@@ -5,6 +5,8 @@
 #include <vulkan/vulkan.hpp>
 
 #include "VkBootstrap.h"
+
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vk_descriptors.h>
 #include <vk_engine.h>
@@ -167,7 +169,8 @@ struct VulkanEngine::impl {
 
   void init_vulkan() {
     const auto orphan_destroyer =
-        vk::ObjectDestroy<vk::NoParent, vk::DispatchLoaderDynamic>{
+        vk::detail::ObjectDestroy<vk::detail::NoParent,
+                                  vk::detail::DispatchLoaderDynamic>{
             nullptr, VULKAN_HPP_DEFAULT_DISPATCHER};
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
@@ -190,6 +193,9 @@ struct VulkanEngine::impl {
                         .require_api_version(1, 3, 0)
                         .build();
 
+    if (!inst_ret)
+      fmt::report_error(inst_ret.error().message().c_str());
+
     auto vkb_inst = inst_ret.value();
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vk::Instance{vkb_inst.instance});
     _instance = vk::UniqueInstance{vkb_inst.instance, orphan_destroyer};
@@ -199,6 +205,8 @@ struct VulkanEngine::impl {
     VkSurfaceKHR surface;
     glfwCreateWindowSurface(_instance.get(), _window.get(), nullptr, &surface);
     _surface = vk::UniqueSurfaceKHR{surface, _instance.get()};
+
+    assert(_surface);
 
     // vulkan 1.3 features
     VkPhysicalDeviceVulkan13Features features{
@@ -217,13 +225,15 @@ struct VulkanEngine::impl {
     // We want a gpu that can write to the GLFW surface and supports vulkan 1.3
     // with the correct features
     vkb::PhysicalDeviceSelector selector{vkb_inst};
-    vkb::PhysicalDevice physicalDevice =
-        selector.set_minimum_version(1, 3)
-            .set_required_features_13(features)
-            .set_required_features_12(features12)
-            .set_surface(surface)
-            .select()
-            .value();
+    auto devRes = selector.set_minimum_version(1, 3)
+                      .set_required_features_13(features)
+                      .set_required_features_12(features12)
+                      .set_surface(surface)
+                      .select();
+    if (!devRes)
+      fmt::report_error(devRes.error().message().c_str());
+
+    vkb::PhysicalDevice physicalDevice = devRes.value();
 
     // create the final vulkan device
     vkb::DeviceBuilder deviceBuilder{physicalDevice};
@@ -301,7 +311,8 @@ struct VulkanEngine::impl {
   }
 
   void init_descriptors() {
-    descriptor_resources descriptor;
+    _descriptor_resources.emplace();
+    auto &descriptor = *_descriptor_resources;
     std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {
         {vk::DescriptorType::eStorageImage, 1}};
 
@@ -327,8 +338,6 @@ struct VulkanEngine::impl {
                                           imgInfo};
 
     _device->updateDescriptorSets(drawImageWrite, {});
-
-    _descriptor_resources = std::move(descriptor);
   }
 
   void init_pipelines() { init_background_pipelines(); }

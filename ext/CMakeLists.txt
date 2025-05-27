@@ -15,7 +15,7 @@ FetchContent_MakeAvailable(VulkanMemoryAllocator)
 FetchContent_Declare(
     fetch_vk_bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
-    GIT_TAG        v1.4.307 
+    GIT_TAG        v${Vulkan_VERSION}
 )
 FetchContent_MakeAvailable(fetch_vk_bootstrap)
 

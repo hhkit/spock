@@ -1,2 +1,4 @@
 #!/bin/sh
-cmake --build build && gdb -q -batch -ex run build/lib/spock -ex bt 
+  cmake . -B build && 
+  cmake --build build && 
+  (cd build/lib && ./spock)

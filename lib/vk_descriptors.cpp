@@ -16,6 +16,8 @@ DescriptorLayoutBuilder::build(vk::Device device,
   for (auto &b : bindings)
     b.stageFlags |= shaderStages;
 
+  fmt::println("there are {} bindings", bindings.size());
+
   return device.createDescriptorSetLayoutUnique(
       vk::DescriptorSetLayoutCreateInfo{flags, bindings, pNext});
 }
@@ -25,8 +27,9 @@ void DescriptorAllocator::init_pool(vk::Device device, uint32_t maxSets,
   std::vector<vk::DescriptorPoolSize> poolSizes;
   poolSizes.reserve(poolRatios.size());
   for (PoolSizeRatio ratio : poolRatios) {
-    poolSizes.push_back(
-        vk::DescriptorPoolSize{ratio.type, uint32_t(ratio.ratio * maxSets)});
+    auto count = uint32_t(ratio.ratio * maxSets);
+    assert(count > 0);
+    poolSizes.push_back(vk::DescriptorPoolSize{ratio.type, count});
   };
 
   pool = device.createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{
