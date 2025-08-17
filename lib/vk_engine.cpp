@@ -175,7 +175,7 @@ struct VulkanEngine::impl {
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
     glfwSetErrorCallback(+[](int error, const char *desc) {
-      fprintf(stderr, "Error: %s\n", desc);
+      fmt::println("Error: {}", desc);
     });
 
     assert(glfwVulkanSupported());
@@ -350,7 +350,7 @@ struct VulkanEngine::impl {
     auto shader = vkutil::load_shader_module(
         std::filesystem::current_path() / "shaders/tutorial.spv", *_device);
     if (!shader) {
-      fmt::println("Error building compute shader");
+      fmt::report_error("Error building compute shader");
     }
 
     vk::PipelineShaderStageCreateInfo stageInfo{

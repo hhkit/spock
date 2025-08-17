@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "shader-slang.slang-language-extension"
+        "shader-slang.slang-language-extension",
+        "llvm-vs-code-extensions.vscode-clangd"
     ]
 }
