@@ -15,7 +15,7 @@ public:
 
 private:
   struct impl;
-  std::unique_ptr<impl> _pimpl;
+  std::unique_ptr<impl> self;
 };
 
 } // namespace spock

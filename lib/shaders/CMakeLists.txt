@@ -1,3 +1,3 @@
 add_slang_shader(tutorial-shader
-    SOURCE tutorial.slang
+    SOURCE chapter_1.slang
     ENTRY computeMain)

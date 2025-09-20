@@ -3,5 +3,6 @@
         "--compile-commands-dir=${workspaceFolder}/build",
         "--query-driver=**",
         "--header-insertion=never"
-    ]
+    ],
+    "editor.formatOnSave": true
 }
