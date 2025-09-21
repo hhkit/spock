@@ -14,7 +14,8 @@ add_executable(spock
 )
 add_dependencies(
 	spock
-	chapter-1-shader
+	gradient_color_shader
+    sky_shader
 )
 
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)

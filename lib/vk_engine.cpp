@@ -55,6 +55,22 @@ struct AllocatedImage {
   VkFormat imageFormat;
 };
 
+struct ComputePushConstants {
+  glm::vec4 data1;
+  glm::vec4 data2;
+  glm::vec4 data3;
+  glm::vec4 data4;
+};
+
+struct ComputeEffect {
+  const char *name;
+
+  VkPipeline pipeline;
+  VkPipelineLayout layout;
+
+  ComputePushConstants data;
+};
+
 //> init_fn
 constexpr bool bUseValidationLayers = true;
 
@@ -113,6 +129,9 @@ struct VulkanEngine::impl {
   VkCommandBuffer _immCommandBuffer;
   VkCommandPool _immCommandPool;
 
+  std::vector<ComputeEffect> backgroundEffects;
+  int currentBackgroundEffect{0};
+
   DeletionQueue _mainDeletionQueue;
   VmaAllocator _allocator;
 
@@ -136,7 +155,6 @@ struct VulkanEngine::impl {
   void init_descriptors();
 
   void init_pipelines();
-  void init_background_pipelines();
 
   void init_imgui();
 
@@ -388,7 +406,23 @@ void VulkanEngine::impl::run() {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ImGui::ShowDemoWindow();
+
+    if (ImGui::Begin("background")) {
+
+      ComputeEffect &selected = backgroundEffects[currentBackgroundEffect];
+
+      ImGui::Text("Selected effect: ", selected.name);
+
+      ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0,
+                       backgroundEffects.size() - 1);
+
+      ImGui::ColorEdit4("data1", (float *)&selected.data.data1);
+      ImGui::ColorEdit4("data2", (float *)&selected.data.data2);
+      ImGui::ColorEdit4("data3", (float *)&selected.data.data3);
+      ImGui::ColorEdit4("data4", (float *)&selected.data.data4);
+
+      ImGui::End();
+    }
 
     ImGui::Render();
     draw();
@@ -649,22 +683,32 @@ void VulkanEngine::impl::init_descriptors() {
   });
 }
 
-void VulkanEngine::impl::init_pipelines() { init_background_pipelines(); }
-
-void VulkanEngine::impl::init_background_pipelines() {
+void VulkanEngine::impl::init_pipelines() {
   VkPipelineLayoutCreateInfo computeLayout{};
   computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   computeLayout.pNext = nullptr;
   computeLayout.pSetLayouts = &_drawImageDescriptorLayout;
   computeLayout.setLayoutCount = 1;
 
+  VkPushConstantRange pushConstant{};
+  pushConstant.offset = 0;
+  pushConstant.size = sizeof(ComputePushConstants);
+  pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+  computeLayout.pPushConstantRanges = &pushConstant;
+  computeLayout.pushConstantRangeCount = 1;
+
   VK_CHECK(vkCreatePipelineLayout(_device, &computeLayout, nullptr,
                                   &_gradientPipelineLayout));
 
-  // layout code
-  VkShaderModule computeDrawShader;
-  if (!vkutil::load_shader_module("shaders/gradient.comp.spv", _device,
-                                  &computeDrawShader)) {
+  VkShaderModule gradientShader;
+  if (!vkutil::load_shader_module("shaders/gradient_color.comp.spv", _device,
+                                  &gradientShader)) {
+    fmt::print("Error when building the compute shader \n");
+  }
+
+  VkShaderModule skyShader;
+  if (!vkutil::load_shader_module("shaders/sky.spv", _device, &skyShader)) {
     fmt::print("Error when building the compute shader \n");
   }
 
@@ -672,7 +716,7 @@ void VulkanEngine::impl::init_background_pipelines() {
   stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   stageinfo.pNext = nullptr;
   stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-  stageinfo.module = computeDrawShader;
+  stageinfo.module = gradientShader;
   stageinfo.pName = "main";
 
   VkComputePipelineCreateInfo computePipelineCreateInfo{};
@@ -682,15 +726,44 @@ void VulkanEngine::impl::init_background_pipelines() {
   computePipelineCreateInfo.layout = _gradientPipelineLayout;
   computePipelineCreateInfo.stage = stageinfo;
 
+  ComputeEffect gradient;
+  gradient.layout = _gradientPipelineLayout;
+  gradient.name = "gradient";
+  gradient.data = {};
+
+  // default colors
+  gradient.data.data1 = glm::vec4(1, 0, 0, 1);
+  gradient.data.data2 = glm::vec4(0, 0, 1, 1);
+
   VK_CHECK(vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1,
                                     &computePipelineCreateInfo, nullptr,
-                                    &_gradientPipeline));
+                                    &gradient.pipeline));
 
-  vkDestroyShaderModule(_device, computeDrawShader, nullptr);
+  // change the shader module only to create the sky shader
+  computePipelineCreateInfo.stage.module = skyShader;
 
-  _mainDeletionQueue.push_function([&]() {
+  ComputeEffect sky;
+  sky.layout = _gradientPipelineLayout;
+  sky.name = "sky";
+  sky.data = {};
+  // default sky parameters
+  sky.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
+
+  VK_CHECK(vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1,
+                                    &computePipelineCreateInfo, nullptr,
+                                    &sky.pipeline));
+
+  // add the 2 background effects into the array
+  backgroundEffects.push_back(gradient);
+  backgroundEffects.push_back(sky);
+
+  // destroy structures properly
+  vkDestroyShaderModule(_device, gradientShader, nullptr);
+  vkDestroyShaderModule(_device, skyShader, nullptr);
+  _mainDeletionQueue.push_function([=]() {
     vkDestroyPipelineLayout(_device, _gradientPipelineLayout, nullptr);
-    vkDestroyPipeline(_device, _gradientPipeline, nullptr);
+    vkDestroyPipeline(_device, sky.pipeline, nullptr);
+    vkDestroyPipeline(_device, gradient.pipeline, nullptr);
   });
 }
 
@@ -787,16 +860,21 @@ void VulkanEngine::impl::immediate_submit(
 }
 
 void VulkanEngine::impl::draw_background(VkCommandBuffer cmd) {
-  // bind the gradient drawing compute pipeline
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipeline);
+  ComputeEffect &effect = backgroundEffects[currentBackgroundEffect];
 
-  // bind the descriptor set containing the draw image for the compute pipeline
+  // bind the background compute pipeline
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
+
+  // bind the descriptor set containing the draw image for the compute
+  // pipeline
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                           _gradientPipelineLayout, 0, 1, &_drawImageDescriptors,
                           0, nullptr);
 
-  // execute the compute pipeline dispatch. We are using 16x16 workgroup size so
-  // we need to divide by it
+  vkCmdPushConstants(cmd, _gradientPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                     0, sizeof(ComputePushConstants), &effect.data);
+  // execute the compute pipeline dispatch. We are using 16x16 workgroup size
+  // so we need to divide by it
   vkCmdDispatch(cmd, std::ceil(_drawExtent.width / 16.0),
                 std::ceil(_drawExtent.height / 16.0), 1);
 }
