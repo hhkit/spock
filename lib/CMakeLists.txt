@@ -15,7 +15,7 @@ add_dependencies(
 	spock
 	tutorial-shader
 )
-target_compile_definitions(spock PRIVATE VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)
 target_link_libraries(spock
     Vulkan::Vulkan 

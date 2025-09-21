@@ -189,7 +189,6 @@ struct VulkanEngine::impl {
 
     VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
 
-    // increase the number of frames drawn
     _frameNumber++;
 
     //< draw_6
@@ -243,6 +242,15 @@ private:
     glfwSetWindowFocusCallback(
         window, +[](GLFWwindow *window, int focused) {
           auto self = static_cast<impl *>(glfwGetWindowUserPointer(window));
+          auto new_focus = focused;
+          auto old_focused = !self->stop_rendering;
+
+          fmt::println("{}", focused ? "focused" : "unfocused");
+
+          if (new_focus != old_focused && focused) {
+            self->destroy_swapchain();
+            self->create_swapchain(self->windowExtent.x, self->windowExtent.y);
+          }
           self->stop_rendering = !focused;
         });
   }
@@ -281,11 +289,19 @@ private:
     // We want a gpu that can write to the SDL surface and supports vulkan 1.3
     // with the correct features
     vkb::PhysicalDeviceSelector selector{vkb_inst};
+    uint32_t count;
+    const char **extensions = glfwGetRequiredInstanceExtensions(&count);
+
+    std::vector<const char *> exts(extensions, extensions + count);
+    for (auto &elem : exts)
+      fmt::println("{}", elem);
     vkb::PhysicalDevice physicalDevice =
         selector.set_minimum_version(1, 3)
             .set_required_features_13(features)
             .set_required_features_12(features12)
             .set_surface(_surface)
+            // .add_required_extensions(
+            //     std::vector<const char *>(extensions, extensions + count))
             // .add_required_extension("VK_KHR_swapchain_maintenance1")
             .select()
             .value();
@@ -309,7 +325,10 @@ private:
 
   void init_swapchain() {
     // create swapchain
-    create_swapchain(windowExtent.x, windowExtent.y);
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    fmt::println("winsz: {} {}", width, height);
+    create_swapchain(width, height);
   }
 
   void init_commands() {
@@ -343,6 +362,8 @@ private:
     VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
 
     for (int i = 0; i < FRAME_OVERLAP; i++) {
+      fmt::println("create sync {}, sem {}", i,
+                   (void *)_frames[i]._renderSemaphore);
       VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr,
                              &_frames[i]._renderFence));
 
@@ -350,6 +371,8 @@ private:
                                  &_frames[i]._swapchainSemaphore));
       VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr,
                                  &_frames[i]._renderSemaphore));
+      fmt::println("          {}, sem {}", i,
+                   (void *)_frames[i]._renderSemaphore);
     }
   }
 
