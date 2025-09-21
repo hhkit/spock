@@ -1,3 +1,3 @@
-add_slang_shader(tutorial-shader
-    SOURCE chapter_1.slang
+add_slang_shader(chapter-1-shader
+    SOURCE gradient.comp.slang
     ENTRY computeMain)

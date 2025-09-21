@@ -10,7 +10,8 @@
 
 [shader("compute")]
 [numthreads(16,16,1)]
-void computeMain(uint3 threadId : SV_DispatchThreadID
+void computeMain(uint3 threadId : SV_DispatchThreadID,
+  uint3 localThreadId : SV_GroupThreadID
   //, [vk::push_constant] uniform constants PushConstants
   )
 {
@@ -25,7 +26,7 @@ void computeMain(uint3 threadId : SV_DispatchThreadID
   {
       float4 color = float4(0.0h, 0.0h, 0.0h, 1.0h);
 
-      if(threadId.x != 0 && threadId.y != 0)
+      if(localThreadId.x != 0 && localThreadId.y != 0)
       {
           color.x = float(texelCoord.x)/size.x;
           color.y = float(texelCoord.y)/size.y;

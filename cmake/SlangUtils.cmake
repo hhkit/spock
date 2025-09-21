@@ -58,7 +58,7 @@ function(add_slang_shader TargetName)
 	# The generated WGSL file
 	cmake_path(GET arg_SOURCE PARENT_PATH parent)
 	cmake_path(GET arg_SOURCE STEM LAST_ONLY stem)
-	set(SPIRV_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/${parent}")
+	set(SPIRV_SHADER_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders")
 	set(SPIRV_SHADER "${SPIRV_SHADER_DIR}/${stem}.spv")
 
 	# Dependency file

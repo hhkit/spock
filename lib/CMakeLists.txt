@@ -6,6 +6,7 @@ add_executable(spock
     vk_images.cpp
     vk_initializers.cpp
     vk_engine.cpp
+    vk_pipelines.cpp
     vk_util.cpp
     ext/stb.cpp
     ext/vma.cpp
@@ -13,7 +14,7 @@ add_executable(spock
 )
 add_dependencies(
 	spock
-	tutorial-shader
+	chapter-1-shader
 )
 
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)
