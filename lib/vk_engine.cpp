@@ -827,7 +827,7 @@ void VulkanEngine::impl::init_imgui() {
   // ImGui_ImplVulkan_CreateFontsTexture();
 
   // add the destroy the imgui created structures
-  _mainDeletionQueue.push_function([=]() {
+  _mainDeletionQueue.push_function([=, this]() {
     ImGui_ImplVulkan_Shutdown();
     vkDestroyDescriptorPool(_device, imguiPool, nullptr);
   });
