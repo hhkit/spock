@@ -11,8 +11,8 @@
 #include <vector>
 
 #include <vk_mem_alloc.h>
-#include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_to_string.hpp>
+#include <vulkan/vk_enum_string_helper.h>
+#include <vulkan/vulkan.h>
 
 #include <fmt/core.h>
 
@@ -21,9 +21,9 @@
 
 #define VK_CHECK(x)                                                            \
   do {                                                                         \
-    vk::Result err = x;                                                        \
-    if (err != vk::Result::eSuccess) {                                         \
-      fmt::print("Detected Vulkan error: {}", vk::to_string(err));             \
+    VkResult err = x;                                                          \
+    if (err) {                                                                 \
+      fmt::print("Detected Vulkan error: {}", string_VkResult(err));           \
       abort();                                                                 \
     }                                                                          \
   } while (0)
