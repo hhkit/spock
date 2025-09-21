@@ -6,8 +6,8 @@
 #include <vk_engine.h>
 
 int main() {
-  spock::VulkanEngine engine;
+  VulkanEngine engine;
   engine.init();
   engine.run();
-  engine.destroy();
+  engine.cleanup();
 }
