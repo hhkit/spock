@@ -22,7 +22,11 @@ target_link_libraries(spock
     Vulkan::Vulkan 
     vk-bootstrap::vk-bootstrap 
     GPUOpen::VulkanMemoryAllocator 
-    stb::Image
+    stb
     fmt::fmt
     glfw
-    glm::glm)
+    glm::glm
+    imgui 
+    imgui::glfw
+    imgui::vulkan    
+)
