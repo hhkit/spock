@@ -10,11 +10,92 @@
 #include <chrono>
 #include <thread>
 
+//> framedata
+struct FrameData {
+  VkSemaphore _swapchainSemaphore, _renderSemaphore;
+  VkFence _renderFence;
+
+  VkCommandPool _commandPool;
+  VkCommandBuffer _mainCommandBuffer;
+};
+
+constexpr unsigned int FRAME_OVERLAP = 2;
+//< framedata
+
 //> init_fn
 constexpr bool bUseValidationLayers = false;
 
+struct VulkanEngine::impl {
+  bool _isInitialized{false};
+  int _frameNumber{0};
+
+  bool stop_rendering{false};
+
+  VkExtent2D _windowExtent{1700, 900};
+
+  GLFWwindow *_window{};
+
+  //> inst_init
+  VkInstance _instance;                      // Vulkan library handle
+  VkDebugUtilsMessengerEXT _debug_messenger; // Vulkan debug output handle
+  VkPhysicalDevice _chosenGPU;               // GPU chosen as the default device
+  VkDevice _device;                          // Vulkan device for commands
+  VkSurfaceKHR _surface;                     // Vulkan window surface
+                                             //< inst_init
+
+  //> queues
+  FrameData _frames[FRAME_OVERLAP];
+
+  FrameData &get_current_frame() {
+    return _frames[_frameNumber % FRAME_OVERLAP];
+  };
+
+  VkQueue _graphicsQueue;
+  uint32_t _graphicsQueueFamily;
+  //< queues
+
+  //> swap_init
+  VkSwapchainKHR _swapchain;
+  VkFormat _swapchainImageFormat;
+
+  std::vector<VkImage> _swapchainImages;
+  std::vector<VkImageView> _swapchainImageViews;
+  VkExtent2D _swapchainExtent;
+  //< swap_init
+
+  impl() = default;
+  ~impl() noexcept;
+  void run();
+  void draw();
+
+  void init_glfw();
+  void init_vulkan();
+
+  void init_swapchain();
+
+  void create_swapchain(uint32_t width, uint32_t height);
+  void destroy_swapchain();
+
+  void init_commands();
+
+  void init_sync_structures();
+};
+
 void VulkanEngine::init() {
-  // We initialize SDL and create a window with it.
+  self.reset(new impl);
+
+  self->init_glfw();
+  self->init_vulkan();
+  self->init_swapchain();
+  self->init_commands();
+  self->init_sync_structures();
+
+  // everything went fine
+  self->_isInitialized = true;
+}
+//< init_fn
+
+void VulkanEngine::impl::init_glfw() {
   glfwInit();
 
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -27,13 +108,11 @@ void VulkanEngine::init() {
   glfwSetKeyCallback(
       _window,
       +[](GLFWwindow *window, int key, int scancode, int action, int mods) {
-        auto self =
-            static_cast<VulkanEngine *>(glfwGetWindowUserPointer(window));
+        auto self = static_cast<impl *>(glfwGetWindowUserPointer(window));
       });
   glfwSetWindowFocusCallback(
       _window, +[](GLFWwindow *window, int focused) {
-        auto self =
-            static_cast<VulkanEngine *>(glfwGetWindowUserPointer(window));
+        auto self = static_cast<impl *>(glfwGetWindowUserPointer(window));
         auto new_focus = focused;
         auto old_focused = !self->stop_rendering;
 
@@ -41,21 +120,10 @@ void VulkanEngine::init() {
 
         self->stop_rendering = !focused;
       });
-
-  init_vulkan();
-
-  init_swapchain();
-
-  init_commands();
-
-  init_sync_structures();
-
-  // everything went fine
-  _isInitialized = true;
 }
-//< init_fn
+
 //> destroy_sc
-void VulkanEngine::destroy_swapchain() {
+void VulkanEngine::impl::destroy_swapchain() {
   vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 
   // destroy swapchain resources
@@ -66,7 +134,10 @@ void VulkanEngine::destroy_swapchain() {
 }
 //< destroy_sc
 
-void VulkanEngine::cleanup() {
+VulkanEngine::VulkanEngine() : self{new impl} {}
+VulkanEngine::~VulkanEngine() noexcept = default;
+
+VulkanEngine::impl::~impl() noexcept {
   if (_isInitialized) {
 
     // make sure the gpu has stopped doing its things
@@ -94,7 +165,11 @@ void VulkanEngine::cleanup() {
   }
 }
 
-void VulkanEngine::draw() {
+void VulkanEngine::cleanup() { self.reset(); }
+
+void VulkanEngine::draw() { self->draw(); }
+
+void VulkanEngine::impl::draw() {
   //> draw_1
   // wait until the gpu has finished rendering the last frame. Timeout of 1
   // second
@@ -205,7 +280,9 @@ void VulkanEngine::draw() {
   //< draw_6
 }
 
-void VulkanEngine::run() {
+void VulkanEngine::run() { self->run(); }
+
+void VulkanEngine::impl::run() {
   // SDL_Event e;
   bool bQuit = false;
 
@@ -224,7 +301,7 @@ void VulkanEngine::run() {
   }
 }
 
-void VulkanEngine::init_vulkan() {
+void VulkanEngine::impl::init_vulkan() {
   //> init_instance
   vkb::InstanceBuilder builder;
 
@@ -288,7 +365,7 @@ void VulkanEngine::init_vulkan() {
 }
 
 //> init_swap
-void VulkanEngine::create_swapchain(uint32_t width, uint32_t height) {
+void VulkanEngine::impl::create_swapchain(uint32_t width, uint32_t height) {
   vkb::SwapchainBuilder swapchainBuilder{_chosenGPU, _device, _surface};
 
   _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
@@ -313,13 +390,13 @@ void VulkanEngine::create_swapchain(uint32_t width, uint32_t height) {
   _swapchainImageViews = vkbSwapchain.get_image_views().value();
 }
 
-void VulkanEngine::init_swapchain() {
+void VulkanEngine::impl::init_swapchain() {
   create_swapchain(_windowExtent.width, _windowExtent.height);
 }
 //< init_swap
 
 //> init_cmd
-void VulkanEngine::init_commands() {
+void VulkanEngine::impl::init_commands() {
   // create a command pool for commands submitted to the graphics queue.
   // we also want the pool to allow for resetting of individual command buffers
   VkCommandPoolCreateInfo commandPoolInfo = vkinit::command_pool_create_info(
@@ -341,7 +418,7 @@ void VulkanEngine::init_commands() {
 //< init_cmd
 
 //> init_sync
-void VulkanEngine::init_sync_structures() {
+void VulkanEngine::impl::init_sync_structures() {
   // create syncronization structures
   // one fence to control when the gpu has finished rendering the frame,
   // and 2 semaphores to syncronize rendering with swapchain
