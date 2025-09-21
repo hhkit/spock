@@ -20,8 +20,8 @@ VkFenceCreateInfo fence_create_info(VkFenceCreateFlags flags = 0);
 VkSemaphoreCreateInfo semaphore_create_info(VkSemaphoreCreateFlags flags = 0);
 
 VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo *cmd,
-                          VkSemaphoreSubmitInfo *signalSemaphoreInfo,
-                          VkSemaphoreSubmitInfo *waitSemaphoreInfo);
+                          std::span<VkSemaphoreSubmitInfo> signalSemaphoreInfo,
+                          std::span<VkSemaphoreSubmitInfo> waitSemaphoreInfo);
 VkPresentInfoKHR present_info();
 
 VkRenderingAttachmentInfo attachment_info(

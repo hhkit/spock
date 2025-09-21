@@ -32,7 +32,7 @@ struct DeletionQueue {
 
 //> framedata
 struct FrameData {
-  VkSemaphore _swapchainSemaphore, _renderSemaphore;
+  VkSemaphore _swapchainSemaphore;
   VkFence _renderFence;
 
   VkCommandPool _commandPool;
@@ -53,7 +53,7 @@ struct AllocatedImage {
 };
 
 //> init_fn
-constexpr bool bUseValidationLayers = false;
+constexpr bool bUseValidationLayers = true;
 
 struct VulkanEngine::impl {
   bool _isInitialized{false};
@@ -61,7 +61,7 @@ struct VulkanEngine::impl {
 
   bool stop_rendering{false};
 
-  VkExtent2D _windowExtent{1700, 900};
+  VkExtent2D _windowExtent{800, 450};
 
   GLFWwindow *_window{};
 
@@ -90,6 +90,7 @@ struct VulkanEngine::impl {
 
   std::vector<VkImage> _swapchainImages;
   std::vector<VkImageView> _swapchainImageViews;
+  std::vector<VkSemaphore> _swapchainSemaphores;
   VkExtent2D _swapchainExtent;
   //< swap_init
 
@@ -177,6 +178,9 @@ void VulkanEngine::impl::init_glfw() {
 
 //> destroy_sc
 void VulkanEngine::impl::destroy_swapchain() {
+  for (auto &elem : _swapchainSemaphores)
+    vkDestroySemaphore(_device, elem, nullptr);
+
   vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 
   // destroy swapchain resources
@@ -202,7 +206,6 @@ VulkanEngine::impl::~impl() noexcept {
 
       // destroy sync objects
       vkDestroyFence(_device, _frames[i]._renderFence, nullptr);
-      vkDestroySemaphore(_device, _frames[i]._renderSemaphore, nullptr);
       vkDestroySemaphore(_device, _frames[i]._swapchainSemaphore, nullptr);
       _frames[i]._deletionQueue.flush();
     }
@@ -226,6 +229,8 @@ void VulkanEngine::cleanup() { self.reset(); }
 void VulkanEngine::draw() { self->draw(); }
 
 void VulkanEngine::impl::draw() {
+  glfwSetWindowTitle(_window, fmt::format("frame: {}", _frameNumber).data());
+
   //> draw_1
   // wait until the gpu has finished rendering the last frame. Timeout of 1
   // second
@@ -238,6 +243,7 @@ void VulkanEngine::impl::draw() {
   //> draw_2
   // request image from the swapchain
   uint32_t swapchainImageIndex;
+
   VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000,
                                  get_current_frame()._swapchainSemaphore,
                                  nullptr, &swapchainImageIndex));
@@ -293,19 +299,20 @@ void VulkanEngine::impl::draw() {
   //> draw_5
   // prepare the submission to the queue.
   // we want to wait on the _presentSemaphore, as that semaphore is signaled
-  // when the swapchain is ready we will signal the _renderSemaphore, to signal
-  // that rendering has finished
+  // when the swapchain is ready we will signal the _swapchainSemaphore, to
+  // signal that rendering has finished
 
   VkCommandBufferSubmitInfo cmdinfo = vkinit::command_buffer_submit_info(cmd);
 
-  VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(
+  VkSemaphoreSubmitInfo waitInfo[] = {vkinit::semaphore_submit_info(
       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
-      get_current_frame()._swapchainSemaphore);
-  VkSemaphoreSubmitInfo signalInfo =
+      get_current_frame()._swapchainSemaphore)};
+  VkSemaphoreSubmitInfo signalInfo[] = {
       vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
-                                    get_current_frame()._renderSemaphore);
+                                    _swapchainSemaphores[swapchainImageIndex]),
+  };
 
-  VkSubmitInfo2 submit = vkinit::submit_info(&cmdinfo, &signalInfo, &waitInfo);
+  VkSubmitInfo2 submit = vkinit::submit_info(&cmdinfo, signalInfo, waitInfo);
 
   // submit command buffer to the queue and execute it.
   //  _renderFence will now block until the graphic commands finish execution
@@ -316,16 +323,17 @@ void VulkanEngine::impl::draw() {
   //> draw_6
   // prepare present
   // this will put the image we just rendered to into the visible window.
-  // we want to wait on the _renderSemaphore for that,
+  // we want to wait on the _swapchainSemaphore for that,
   // as its necessary that drawing commands have finished before the image is
   // displayed to the user
+
   VkPresentInfoKHR presentInfo = {};
   presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   presentInfo.pNext = nullptr;
   presentInfo.pSwapchains = &_swapchain;
   presentInfo.swapchainCount = 1;
 
-  presentInfo.pWaitSemaphores = &get_current_frame()._renderSemaphore;
+  presentInfo.pWaitSemaphores = &_swapchainSemaphores[swapchainImageIndex];
   presentInfo.waitSemaphoreCount = 1;
 
   presentInfo.pImageIndices = &swapchainImageIndex;
@@ -456,6 +464,12 @@ void VulkanEngine::impl::create_swapchain(uint32_t width, uint32_t height) {
   _swapchain = vkbSwapchain.swapchain;
   _swapchainImages = vkbSwapchain.get_images().value();
   _swapchainImageViews = vkbSwapchain.get_image_views().value();
+  _swapchainSemaphores = std::vector<VkSemaphore>(_swapchainImages.size());
+
+  for (auto &sem : _swapchainSemaphores) {
+    VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
+    VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &sem));
+  }
 }
 
 void VulkanEngine::impl::init_swapchain() {
@@ -541,8 +555,6 @@ void VulkanEngine::impl::init_sync_structures() {
 
     VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr,
                                &_frames[i]._swapchainSemaphore));
-    VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr,
-                               &_frames[i]._renderSemaphore));
   }
 }
 //< init_sync

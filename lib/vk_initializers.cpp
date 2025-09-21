@@ -86,18 +86,19 @@ vkinit::command_buffer_submit_info(VkCommandBuffer cmd) {
   return info;
 }
 
-VkSubmitInfo2 vkinit::submit_info(VkCommandBufferSubmitInfo *cmd,
-                                  VkSemaphoreSubmitInfo *signalSemaphoreInfo,
-                                  VkSemaphoreSubmitInfo *waitSemaphoreInfo) {
+VkSubmitInfo2
+vkinit::submit_info(VkCommandBufferSubmitInfo *cmd,
+                    std::span<VkSemaphoreSubmitInfo> signalSemaphoreInfo,
+                    std::span<VkSemaphoreSubmitInfo> waitSemaphoreInfo) {
   VkSubmitInfo2 info = {};
   info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
   info.pNext = nullptr;
 
-  info.waitSemaphoreInfoCount = waitSemaphoreInfo == nullptr ? 0 : 1;
-  info.pWaitSemaphoreInfos = waitSemaphoreInfo;
+  info.waitSemaphoreInfoCount = waitSemaphoreInfo.size();
+  info.pWaitSemaphoreInfos = waitSemaphoreInfo.data();
 
-  info.signalSemaphoreInfoCount = signalSemaphoreInfo == nullptr ? 0 : 1;
-  info.pSignalSemaphoreInfos = signalSemaphoreInfo;
+  info.signalSemaphoreInfoCount = signalSemaphoreInfo.size();
+  info.pSignalSemaphoreInfos = signalSemaphoreInfo.data();
 
   info.commandBufferInfoCount = 1;
   info.pCommandBufferInfos = cmd;
