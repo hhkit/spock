@@ -3,6 +3,36 @@
 #include <vk_types.h>
 
 namespace vkutil {
+class PipelineBuilder {
+public:
+  std::vector<VkPipelineShaderStageCreateInfo> _shaderStages;
+
+  VkPipelineInputAssemblyStateCreateInfo _inputAssembly;
+  VkPipelineRasterizationStateCreateInfo _rasterizer;
+  VkPipelineColorBlendAttachmentState _colorBlendAttachment;
+  VkPipelineMultisampleStateCreateInfo _multisampling;
+  VkPipelineLayout _pipelineLayout;
+  VkPipelineDepthStencilStateCreateInfo _depthStencil;
+  VkPipelineRenderingCreateInfo _renderInfo;
+  VkFormat _colorAttachmentformat;
+
+  PipelineBuilder() { clear(); }
+
+  void set_shaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
+  void set_input_topology(VkPrimitiveTopology topology);
+  void set_polygon_mode(VkPolygonMode mode);
+  void set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace);
+  void set_multisampling_none();
+  void set_color_attachment_format(VkFormat format);
+  void set_depth_format(VkFormat format);
+
+  void disable_blending();
+  void disable_depthtest();
+  void clear();
+
+  VkPipeline build_pipeline(VkDevice device);
+};
+
 bool load_shader_module(std::filesystem::path filePath, VkDevice device,
                         VkShaderModule *outShaderModule);
-}
+} // namespace vkutil

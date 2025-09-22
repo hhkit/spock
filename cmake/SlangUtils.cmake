@@ -44,7 +44,7 @@
 #   )
 function(add_slang_shader TargetName)
 	set(options)
-	set(oneValueArgs SOURCE ENTRY)
+	set(oneValueArgs SOURCE ENTRY STAGE)
 	set(multiValueArgs SLANG_INCLUDE_DIRECTORIES)
 	cmake_parse_arguments(arg "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -55,11 +55,13 @@ function(add_slang_shader TargetName)
 	# The input slang file
 	set(SLANG_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/${arg_SOURCE}")
 
+
+
 	# The generated WGSL file
 	cmake_path(GET arg_SOURCE PARENT_PATH parent)
 	cmake_path(GET arg_SOURCE STEM LAST_ONLY stem)
 	set(SPIRV_SHADER_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders")
-	set(SPIRV_SHADER "${SPIRV_SHADER_DIR}/${stem}.spv")
+	set(SPIRV_SHADER "${SPIRV_SHADER_DIR}/${stem}.${arg_STAGE}.spv")
 
 	# Dependency file
 	set(DEPFILE "${CMAKE_CURRENT_BINARY_DIR}/${TargetName}.depfile")

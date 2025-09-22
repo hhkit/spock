@@ -16,6 +16,8 @@ add_dependencies(
 	spock
 	gradient_color_shader
     sky_shader
+    colored_triangle_vert
+    colored_triangle_frag
 )
 
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)
