@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
+
 #include "vk_mem_alloc.h"
 #include <array>
 #include <chrono>
@@ -136,6 +137,11 @@ struct VulkanEngine::impl {
   VkPipelineLayout _trianglePipelineLayout;
   VkPipeline _trianglePipeline;
 
+  VkPipelineLayout _meshPipelineLayout;
+  VkPipeline _meshPipeline;
+
+  GPUMeshBuffers rectangle;
+
   DeletionQueue _mainDeletionQueue;
   VmaAllocator _allocator;
 
@@ -149,9 +155,6 @@ struct VulkanEngine::impl {
 
   void init_swapchain();
 
-  void create_swapchain(uint32_t width, uint32_t height);
-  void destroy_swapchain();
-
   void init_commands();
 
   void init_sync_structures();
@@ -161,10 +164,21 @@ struct VulkanEngine::impl {
   void init_pipelines();
   void init_background_pipelines();
   void init_triangle_pipeline();
+  void init_mesh_pipeline();
+
+  void init_default_data();
 
   void init_imgui();
 
   void immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function);
+  GPUMeshBuffers uploadMesh(std::span<uint32_t> indices,
+                            std::span<Vertex> vertices);
+
+  void create_swapchain(uint32_t width, uint32_t height);
+  void destroy_swapchain();
+  AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage,
+                                VmaMemoryUsage memoryUsage);
+  void destroy_buffer(const AllocatedBuffer &buffer);
 
   void draw_background(VkCommandBuffer cmd);
   void draw_geometry(VkCommandBuffer cmd);
@@ -182,6 +196,7 @@ void VulkanEngine::init() {
   self->init_descriptors();
   self->init_pipelines();
   self->init_imgui();
+  self->init_default_data();
 
   // everything went fine
   self->_isInitialized = true;
@@ -214,21 +229,6 @@ void VulkanEngine::impl::init_glfw() {
         self->stop_rendering = !focused;
       });
 }
-
-//> destroy_sc
-void VulkanEngine::impl::destroy_swapchain() {
-  for (auto &elem : _swapchainSemaphores)
-    vkDestroySemaphore(_device, elem, nullptr);
-
-  vkDestroySwapchainKHR(_device, _swapchain, nullptr);
-
-  // destroy swapchain resources
-  for (int i = 0; i < _swapchainImageViews.size(); i++) {
-
-    vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
-  }
-}
-//< destroy_sc
 
 VulkanEngine::VulkanEngine() : self{new impl} {}
 VulkanEngine::~VulkanEngine() noexcept = default;
@@ -514,38 +514,6 @@ void VulkanEngine::impl::init_vulkan() {
   _mainDeletionQueue.push_function([&]() { vmaDestroyAllocator(_allocator); });
 }
 
-//> init_swap
-void VulkanEngine::impl::create_swapchain(uint32_t width, uint32_t height) {
-  vkb::SwapchainBuilder swapchainBuilder{_chosenGPU, _device, _surface};
-
-  _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-
-  vkb::Swapchain vkbSwapchain =
-      swapchainBuilder
-          //.use_default_format_selection()
-          .set_desired_format(VkSurfaceFormatKHR{
-              .format = _swapchainImageFormat,
-              .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-          // use vsync present mode
-          .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-          .set_desired_extent(width, height)
-          .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-          .build()
-          .value();
-
-  _swapchainExtent = vkbSwapchain.extent;
-  // store swapchain and its related images
-  _swapchain = vkbSwapchain.swapchain;
-  _swapchainImages = vkbSwapchain.get_images().value();
-  _swapchainImageViews = vkbSwapchain.get_image_views().value();
-  _swapchainSemaphores = std::vector<VkSemaphore>(_swapchainImages.size());
-
-  for (auto &sem : _swapchainSemaphores) {
-    VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
-    VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &sem));
-  }
-}
-
 void VulkanEngine::impl::init_swapchain() {
   create_swapchain(_windowExtent.width, _windowExtent.height);
 
@@ -698,6 +666,7 @@ void VulkanEngine::impl::init_descriptors() {
 void VulkanEngine::impl::init_pipelines() {
   init_background_pipelines();
   init_triangle_pipeline();
+  init_mesh_pipeline();
 }
 
 void VulkanEngine::impl::init_background_pipelines() {
@@ -846,6 +815,104 @@ void VulkanEngine::impl::init_triangle_pipeline() {
   });
 }
 
+void VulkanEngine::impl::init_mesh_pipeline() {
+  VkShaderModule triangleFragShader;
+  if (!vkutil::load_shader_module("shaders/colored_triangle.frag.spv", _device,
+                                  &triangleFragShader)) {
+    fmt::print("Error when building the triangle fragment shader module");
+  } else {
+    fmt::print("Triangle fragment shader succesfully loaded");
+  }
+
+  VkShaderModule triangleVertexShader;
+  if (!vkutil::load_shader_module("shaders/colored_triangle_mesh.vert.spv",
+                                  _device, &triangleVertexShader)) {
+    fmt::print("Error when building the triangle vertex shader module");
+  } else {
+    fmt::print("Triangle vertex shader succesfully loaded");
+  }
+
+  VkPushConstantRange bufferRange{};
+  bufferRange.offset = 0;
+  bufferRange.size = sizeof(GPUDrawPushConstants);
+  bufferRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+  VkPipelineLayoutCreateInfo pipeline_layout_info =
+      vkinit::pipeline_layout_create_info();
+  pipeline_layout_info.pPushConstantRanges = &bufferRange;
+  pipeline_layout_info.pushConstantRangeCount = 1;
+
+  VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr,
+                                  &_meshPipelineLayout));
+
+  vkutil::PipelineBuilder pipelineBuilder;
+
+  // use the triangle layout we created
+  pipelineBuilder._pipelineLayout = _meshPipelineLayout;
+  // connecting the vertex and pixel shaders to the pipeline
+  pipelineBuilder.set_shaders(triangleVertexShader, triangleFragShader);
+  // it will draw triangles
+  pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+  // filled triangles
+  pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+  // no backface culling
+  pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+  // no multisampling
+  pipelineBuilder.set_multisampling_none();
+  // no blending
+  pipelineBuilder.disable_blending();
+
+  pipelineBuilder.disable_depthtest();
+
+  // connect the image format we will draw into, from draw image
+  pipelineBuilder.set_color_attachment_format(_drawImage.imageFormat);
+  pipelineBuilder.set_depth_format(VK_FORMAT_UNDEFINED);
+
+  // finally build the pipeline
+  _meshPipeline = pipelineBuilder.build_pipeline(_device);
+
+  // clean structures
+  vkDestroyShaderModule(_device, triangleFragShader, nullptr);
+  vkDestroyShaderModule(_device, triangleVertexShader, nullptr);
+
+  _mainDeletionQueue.push_function([&]() {
+    vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
+    vkDestroyPipeline(_device, _meshPipeline, nullptr);
+  });
+}
+
+void VulkanEngine::impl::init_default_data() {
+  std::array<Vertex, 4> rect_vertices;
+
+  rect_vertices[0].position = {0.5, -0.5, 0};
+  rect_vertices[1].position = {0.5, 0.5, 0};
+  rect_vertices[2].position = {-0.5, -0.5, 0};
+  rect_vertices[3].position = {-0.5, 0.5, 0};
+
+  rect_vertices[0].color = {0, 0, 0, 1};
+  rect_vertices[1].color = {0.5, 0.5, 0.5, 1};
+  rect_vertices[2].color = {1, 0, 0, 1};
+  rect_vertices[3].color = {0, 1, 0, 1};
+
+  std::array<uint32_t, 6> rect_indices;
+
+  rect_indices[0] = 0;
+  rect_indices[1] = 1;
+  rect_indices[2] = 2;
+
+  rect_indices[3] = 2;
+  rect_indices[4] = 1;
+  rect_indices[5] = 3;
+
+  rectangle = uploadMesh(rect_indices, rect_vertices);
+
+  // delete the rectangle data on engine shutdown
+  _mainDeletionQueue.push_function([&]() {
+    destroy_buffer(rectangle.indexBuffer);
+    destroy_buffer(rectangle.vertexBuffer);
+  });
+}
+
 void VulkanEngine::impl::init_imgui() {
   // 1: create descriptor pool for IMGUI
   //  the size of the pool is very oversize, but it's copied from imgui demo
@@ -912,6 +979,81 @@ void VulkanEngine::impl::init_imgui() {
   });
 }
 
+//> init_swap
+void VulkanEngine::impl::create_swapchain(uint32_t width, uint32_t height) {
+  vkb::SwapchainBuilder swapchainBuilder{_chosenGPU, _device, _surface};
+
+  _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+
+  vkb::Swapchain vkbSwapchain =
+      swapchainBuilder
+          //.use_default_format_selection()
+          .set_desired_format(VkSurfaceFormatKHR{
+              .format = _swapchainImageFormat,
+              .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+          // use vsync present mode
+          .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+          .set_desired_extent(width, height)
+          .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+          .build()
+          .value();
+
+  _swapchainExtent = vkbSwapchain.extent;
+  // store swapchain and its related images
+  _swapchain = vkbSwapchain.swapchain;
+  _swapchainImages = vkbSwapchain.get_images().value();
+  _swapchainImageViews = vkbSwapchain.get_image_views().value();
+  _swapchainSemaphores = std::vector<VkSemaphore>(_swapchainImages.size());
+
+  for (auto &sem : _swapchainSemaphores) {
+    VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
+    VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &sem));
+  }
+}
+
+AllocatedBuffer VulkanEngine::impl::create_buffer(size_t allocSize,
+                                                  VkBufferUsageFlags usage,
+                                                  VmaMemoryUsage memoryUsage) {
+  // allocate buffer
+  VkBufferCreateInfo bufferInfo = {.sType =
+                                       VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+  bufferInfo.pNext = nullptr;
+  bufferInfo.size = allocSize;
+
+  bufferInfo.usage = usage;
+
+  VmaAllocationCreateInfo vmaallocInfo = {};
+  vmaallocInfo.usage = memoryUsage;
+  vmaallocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+  AllocatedBuffer newBuffer;
+
+  // allocate the buffer
+  VK_CHECK(vmaCreateBuffer(_allocator, &bufferInfo, &vmaallocInfo,
+                           &newBuffer.buffer, &newBuffer.allocation,
+                           &newBuffer.info));
+
+  return newBuffer;
+}
+
+//> destroy_sc
+void VulkanEngine::impl::destroy_swapchain() {
+  for (auto &elem : _swapchainSemaphores)
+    vkDestroySemaphore(_device, elem, nullptr);
+
+  vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+
+  // destroy swapchain resources
+  for (int i = 0; i < _swapchainImageViews.size(); i++) {
+
+    vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
+  }
+}
+//< destroy_sc
+
+void VulkanEngine::impl::destroy_buffer(const AllocatedBuffer &buffer) {
+  vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
+}
+
 void VulkanEngine::impl::immediate_submit(
     std::function<void(VkCommandBuffer cmd)> &&function) {
   VK_CHECK(vkResetFences(_device, 1, &_immFence));
@@ -936,6 +1078,69 @@ void VulkanEngine::impl::immediate_submit(
   VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submit, _immFence));
 
   VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
+}
+
+GPUMeshBuffers VulkanEngine::impl::uploadMesh(std::span<uint32_t> indices,
+                                              std::span<Vertex> vertices) {
+  const size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
+  const size_t indexBufferSize = indices.size() * sizeof(uint32_t);
+
+  GPUMeshBuffers newSurface;
+
+  // create vertex buffer
+  newSurface.vertexBuffer = create_buffer(
+      vertexBufferSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VMA_MEMORY_USAGE_GPU_ONLY);
+
+  // find the adress of the vertex buffer
+  VkBufferDeviceAddressInfo deviceAdressInfo{
+      .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+      .buffer = newSurface.vertexBuffer.buffer};
+  newSurface.vertexBufferAddress =
+      vkGetBufferDeviceAddress(_device, &deviceAdressInfo);
+
+  // create index buffer
+  newSurface.indexBuffer = create_buffer(indexBufferSize,
+                                         VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+                                             VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                         VMA_MEMORY_USAGE_GPU_ONLY);
+
+  AllocatedBuffer staging = create_buffer(vertexBufferSize + indexBufferSize,
+                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                          VMA_MEMORY_USAGE_CPU_ONLY);
+
+  void *data;
+  VK_CHECK(vmaMapMemory(_allocator, staging.allocation, &data));
+
+  // copy vertex buffer
+  memcpy(data, vertices.data(), vertexBufferSize);
+  // copy index buffer
+  memcpy((char *)data + vertexBufferSize, indices.data(), indexBufferSize);
+
+  immediate_submit([&](VkCommandBuffer cmd) {
+    VkBufferCopy vertexCopy{0};
+    vertexCopy.dstOffset = 0;
+    vertexCopy.srcOffset = 0;
+    vertexCopy.size = vertexBufferSize;
+
+    vkCmdCopyBuffer(cmd, staging.buffer, newSurface.vertexBuffer.buffer, 1,
+                    &vertexCopy);
+
+    VkBufferCopy indexCopy{0};
+    indexCopy.dstOffset = 0;
+    indexCopy.srcOffset = vertexBufferSize;
+    indexCopy.size = indexBufferSize;
+
+    vkCmdCopyBuffer(cmd, staging.buffer, newSurface.indexBuffer.buffer, 1,
+                    &indexCopy);
+  });
+
+  vmaUnmapMemory(_allocator, staging.allocation);
+  destroy_buffer(staging);
+
+  return newSurface;
 }
 
 void VulkanEngine::impl::draw_background(VkCommandBuffer cmd) {
@@ -989,7 +1194,21 @@ void VulkanEngine::impl::draw_geometry(VkCommandBuffer cmd) {
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 
   // launch a draw command to draw 3 vertices
+  // launch a draw command to draw 3 vertices
   vkCmdDraw(cmd, 3, 1, 0, 0);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
+
+  GPUDrawPushConstants push_constants;
+  push_constants.worldMatrix = glm::mat4{1.f};
+  push_constants.vertexBuffer = rectangle.vertexBufferAddress;
+
+  vkCmdPushConstants(cmd, _meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(GPUDrawPushConstants), &push_constants);
+  vkCmdBindIndexBuffer(cmd, rectangle.indexBuffer.buffer, 0,
+                       VK_INDEX_TYPE_UINT32);
+
+  vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
 
   vkCmdEndRendering(cmd);
 }

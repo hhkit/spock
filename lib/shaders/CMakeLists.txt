@@ -22,3 +22,8 @@ add_slang_shader(colored_triangle_frag
     SOURCE colored_triangle.slang
     ENTRY fragmentMain
     STAGE frag)
+
+add_slang_shader(colored_triangle_mesh_vert
+    SOURCE colored_triangle_mesh.slang
+    ENTRY vertexMain
+    STAGE vert)

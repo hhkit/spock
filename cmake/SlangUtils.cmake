@@ -98,6 +98,7 @@ function(add_slang_shader TargetName)
 			${SLANG_SHADER}
 			-entry ${arg_ENTRY}
 			-target spirv
+			-fvk-use-gl-layout 
 			-o ${SPIRV_SHADER}
 			-depfile ${DEPFILE}
 			${INCLUDE_DIRECTORY_OPTS}

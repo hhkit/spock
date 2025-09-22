@@ -18,6 +18,7 @@ add_dependencies(
     sky_shader
     colored_triangle_vert
     colored_triangle_frag
+    colored_triangle_mesh_vert
 )
 
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)
