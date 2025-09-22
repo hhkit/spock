@@ -6,6 +6,7 @@ add_executable(spock
     vk_images.cpp
     vk_initializers.cpp
     vk_engine.cpp
+    vk_loader.cpp
     vk_pipelines.cpp
     vk_util.cpp
     ext/stb.cpp
@@ -21,16 +22,18 @@ add_dependencies(
     colored_triangle_mesh_vert
 )
 
+target_compile_definitions(spock PRIVATE GLM_ENABLE_EXPERIMENTAL)
 target_include_directories(spock PRIVATE ${spock_SOURCE_DIR}/include)
 target_link_libraries(spock
-    Vulkan::Vulkan 
-    vk-bootstrap::vk-bootstrap 
-    GPUOpen::VulkanMemoryAllocator 
-    stb
+    fastgltf
     fmt::fmt
     glfw
     glm::glm
     imgui 
     imgui::glfw
     imgui::vulkan    
+    stb
+    Vulkan::Vulkan 
+    vk-bootstrap::vk-bootstrap 
+    GPUOpen::VulkanMemoryAllocator 
 )

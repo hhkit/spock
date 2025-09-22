@@ -15,8 +15,8 @@ include(FetchContent)
 include(cmake/FindSlang.cmake)
 include(cmake/SlangUtils.cmake)
 
+file(COPY assets DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 add_subdirectory(ext)
-
 add_subdirectory(lib)
 
 

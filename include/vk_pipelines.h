@@ -27,6 +27,7 @@ public:
   void set_depth_format(VkFormat format);
 
   void disable_blending();
+  void enable_depthtest(bool depthWriteEnable, VkCompareOp op);
   void disable_depthtest();
   void clear();
 

@@ -32,6 +32,7 @@ FetchContent_Declare(
 	GIT_TAG 	1.0.1
 )
 FetchContent_MakeAvailable(glm)
+set(GLM_ENABLE_EXPERIMENTAL ON CACHE BOOL "" FORCE)
 
 # fmt
 FetchContent_Declare(
@@ -53,6 +54,13 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
+# fastgltf
+FetchContent_Declare(
+    fastgltf
+    GIT_REPOSITORY https://github.com/spnda/fastgltf
+    GIT_TAG v0.9.0
+)
+FetchContent_MakeAvailable(fastgltf)
 
 # imgui
 FetchContent_Declare(
