@@ -898,6 +898,7 @@ void VulkanEngine::impl::init_mesh_pipeline() {
   // no multisampling
   pipelineBuilder.set_multisampling_none();
   // no blending
+  pipelineBuilder.disable_blending();
   pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
   // connect the image format we will draw into, from draw image
@@ -1241,7 +1242,7 @@ void VulkanEngine::impl::draw_geometry(VkCommandBuffer cmd) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
 
   GPUDrawPushConstants push_constants;
-  push_constants.worldMatrix = glm::mat4{1.f};
+  push_constants.worldMatrix = glm::identity<glm::mat4>();
   push_constants.vertexBuffer = rectangle.vertexBufferAddress;
 
   vkCmdPushConstants(cmd, _meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -1250,11 +1251,12 @@ void VulkanEngine::impl::draw_geometry(VkCommandBuffer cmd) {
                        VK_INDEX_TYPE_UINT32);
   vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
 
-  glm::mat4 view = glm::translate(glm::vec3{0, 0, -5});
+  glm::mat4 view = glm::translate(
+      glm::vec3{0, 0, std::lerp(0.f, -5.f, _frameNumber / 1000.f)});
   // camera projection
   glm::mat4 projection = glm::perspective(
       glm::radians(70.f), (float)_drawExtent.width / (float)_drawExtent.height,
-      10000.f, 0.1f);
+      0.1f, 10000.f);
 
   // invert the Y direction on projection matrix so that we are more similar
   // to opengl and gltf axis
