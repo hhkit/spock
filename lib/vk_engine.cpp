@@ -9,6 +9,7 @@
 #include <vk_types.h>
 
 #include "VkBootstrap.h"
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include "glm/gtx/transform.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -1252,17 +1253,22 @@ void VulkanEngine::impl::draw_geometry(VkCommandBuffer cmd) {
   vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
 
   glm::mat4 view = glm::translate(
-      glm::vec3{0, 0, std::lerp(0.f, -5.f, _frameNumber / 1000.f)});
+      // (glm::vec3{0, 0, std::lerp(2, -2, _frameNumber / (500.0))}));
+      glm::vec3{0, 0, -5});
   // camera projection
   glm::mat4 projection = glm::perspective(
       glm::radians(70.f), (float)_drawExtent.width / (float)_drawExtent.height,
-      0.1f, 10000.f);
+      10000.f, 0.1f);
+  // 0.1f, 10000.f);
 
   // invert the Y direction on projection matrix so that we are more similar
   // to opengl and gltf axis
   projection[1][1] *= -1;
 
   push_constants.worldMatrix = projection * view;
+  // projection * view *
+  // glm::rotate(_frameNumber / (2 * 10 * glm::pi<float>()),
+  //             glm::vec3{0, 1, 0});
   push_constants.vertexBuffer = testMeshes[2]->meshBuffers.vertexBufferAddress;
 
   vkCmdPushConstants(cmd, _meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
@@ -1271,7 +1277,6 @@ void VulkanEngine::impl::draw_geometry(VkCommandBuffer cmd) {
                        VK_INDEX_TYPE_UINT32);
   vkCmdDrawIndexed(cmd, testMeshes[2]->surfaces[0].count, 1,
                    testMeshes[2]->surfaces[0].startIndex, 0, 0);
-
   vkCmdEndRendering(cmd);
 }
 
